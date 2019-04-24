@@ -7,6 +7,7 @@ from data_load import NerDataset, pad, VOCAB, tokenizer, tag2idx, idx2tag
 import os
 import numpy as np
 import argparse
+from conlleval import evaluate_conll_file
 
 def train(model, iterator, optimizer, criterion):
     model.train()
@@ -64,6 +65,10 @@ def eval(model, iterator, f):
             for w, t, p in zip(words.split()[1:-1], tags.split()[1:-1], preds[1:-1]):
                 fout.write(f"{w} {t} {p}\n")
             fout.write("\n")
+
+    with open("temp") as fout:
+        evaluate_conll_file(fout)
+    
 
     ## calc metric
     y_true =  np.array([tag2idx[line.split()[1]] for line in open("temp", 'r').read().splitlines() if len(line) > 0])
