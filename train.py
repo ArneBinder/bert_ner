@@ -129,7 +129,7 @@ if __name__=="__main__":
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    model = Net(hp.top_rnns, len(VOCAB), device, hp.finetuning).cuda()
+    model = Net(hp.top_rnns, len(VOCAB), device, hp.finetuning).to(device)
     model = nn.DataParallel(model)
 
     train_dataset = NerDataset(hp.trainset)
