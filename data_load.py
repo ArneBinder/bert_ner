@@ -89,6 +89,13 @@ class NerDataset(data.Dataset):
     def __getitem__(self, idx):
         return self.records[idx]
 
+    def get_xy(self):
+        words, x, is_heads, tags, y, seqlen = zip(*self.records)
+        return list(x), list(y)
+
+    def vocab_size(self):
+        return len(tokenizer.vocab)
+
     def old_getitem(self, idx):
         words, tags = self.sents[idx], self.tags_li[idx] # words, tags: string list
 
