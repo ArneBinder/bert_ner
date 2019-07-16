@@ -33,24 +33,63 @@ VOCAB = ('<PAD>', 'O', 'I-LOC', 'B-PER', 'I-PER', 'I-ORG', 'I-MISC', 'B-MISC', '
 tag2idx = {tag: idx for idx, tag in enumerate(VOCAB)}
 idx2tag = {idx: tag for idx, tag in enumerate(VOCAB)}
 
+def convert_to_record(words, tags):
+    # We give credits only to the first piece.
+    x, y = [], []  # list of ids
+    is_heads = []  # list. 1: the token is the first piece of a word
+    for w, t in zip(words, tags):
+        tokens = tokenizer.tokenize(w) if w not in ("[CLS]", "[SEP]") else [w]
+        xx = tokenizer.convert_tokens_to_ids(tokens)
+
+        is_head = [1] + [0] * (len(tokens) - 1)
+
+        t = [t] + ["<PAD>"] * (len(tokens) - 1)  # <PAD>: no decision
+        yy = [tag2idx[each] for each in t]  # (T,)
+
+        x.extend(xx)
+        is_heads.extend(is_head)
+        y.extend(yy)
+
+    assert len(x) == len(y) == len(is_heads), f"len(x)={len(x)}, len(y)={len(y)}, len(is_heads)={len(is_heads)}"
+
+    # seqlen
+    seqlen = len(y)
+
+    # to string
+    words = " ".join(words)
+    tags = " ".join(tags)
+    return words, x, is_heads, tags, y, seqlen
+
 class NerDataset(data.Dataset):
     def __init__(self, fpath):
         """
         fpath: [train|valid|test].txt
         """
+        self.maxlen = -1
         entries = open(fpath, 'r').read().strip().split("\n\n")
-        sents, tags_li = [], [] # list of lists
+        #sents, tags_li = [], [] # list of lists
+        records = []
         for entry in entries:
             words = [line.split()[0] for line in entry.splitlines()]
             tags = ([line.split()[-1] for line in entry.splitlines()])
-            sents.append(["[CLS]"] + words + ["[SEP]"])
-            tags_li.append(["<PAD>"] + tags + ["<PAD>"])
-        self.sents, self.tags_li = sents, tags_li
+            sent = ["[CLS]"] + words + ["[SEP]"]
+            sent_tags = ["<PAD>"] + tags + ["<PAD>"]
+            words, x, is_heads, tags, y, seqlen = convert_to_record(sent, sent_tags)
+            self.maxlen = max(seqlen, self.maxlen)
+
+            records.append((words, x, is_heads, tags, y, seqlen))
+            #sents.append(sent)
+            #tags_li.append(sent_tags)
+        #self.sents, self.tags_li = sents, tags_li
+        self.records = records
 
     def __len__(self):
-        return len(self.sents)
+        return len(self.records)
 
     def __getitem__(self, idx):
+        return self.records[idx]
+
+    def old_getitem(self, idx):
         words, tags = self.sents[idx], self.tags_li[idx] # words, tags: string list
 
         # We give credits only to the first piece.
@@ -80,22 +119,22 @@ class NerDataset(data.Dataset):
         return words, x, is_heads, tags, y, seqlen
 
 
-def pad(batch):
+def pad(batch, maxlen=None):
     '''Pads to the longest sample'''
     f = lambda x: [sample[x] for sample in batch]
     words = f(0)
     is_heads = f(2)
     tags = f(3)
     seqlens = f(-1)
-    maxlen = np.array(seqlens).max()
+
+    if maxlen is None:
+        maxlen = np.array(seqlens).max()
 
     f = lambda x, seqlen: [sample[x] + [0] * (seqlen - len(sample[x])) for sample in batch] # 0: <pad>
     x = f(1, maxlen)
     y = f(-2, maxlen)
 
 
-    f = torch.LongTensor
-
-    return words, f(x), is_heads, tags, f(y), seqlens
+    return words, torch.LongTensor(x), is_heads, tags, torch.LongTensor(y), seqlens
 
 

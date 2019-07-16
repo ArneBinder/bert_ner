@@ -37,7 +37,7 @@ def split_tag(chunk_tag):
     B-PER -> (B, PER)
     O -> (O, None)
     """
-    if chunk_tag == 'O':
+    if chunk_tag in ['O', '<PAD>']:
         return ('O', None)
     return chunk_tag.split('-', maxsplit=1)
 

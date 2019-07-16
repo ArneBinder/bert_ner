@@ -1,3 +1,5 @@
+from functools import partial
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -121,6 +123,7 @@ if __name__=="__main__":
     parser.add_argument("--lr", type=float, default=0.0001)
     parser.add_argument("--n_epochs", type=int, default=30)
     parser.add_argument("--finetuning", dest="finetuning", action="store_true")
+    parser.add_argument("--explainable", dest="explainable", action="store_true")
     parser.add_argument("--top_rnns", dest="top_rnns", action="store_true")
     parser.add_argument("--logdir", type=str, default="checkpoints/01")
     parser.add_argument("--trainset", type=str, default="conll2003/train.txt")
@@ -128,23 +131,33 @@ if __name__=="__main__":
     hp = parser.parse_args()
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-    model = Net(hp.top_rnns, len(VOCAB), device, hp.finetuning).to(device)
-    model = nn.DataParallel(model)
-
     train_dataset = NerDataset(hp.trainset)
     eval_dataset = NerDataset(hp.validset)
+
+    if hp.explainable:
+        print('WARNING: use EXPLAINABLE mode')
+        maxlen = max(train_dataset.maxlen, eval_dataset.maxlen)
+        _pad = partial(pad, maxlen=maxlen)
+
+        model = Net(top_rnns=hp.top_rnns, vocab_size=len(VOCAB), device=device, finetuning=hp.finetuning,
+                    explainable=hp.explainable).to(device)
+        model.init_tf(maxlen=maxlen)
+        #model = nn.DataParallel(model)
+    else:
+        model = Net(hp.top_rnns, len(VOCAB), device, hp.finetuning).to(device)
+        model = nn.DataParallel(model)
+        _pad = pad
 
     train_iter = data.DataLoader(dataset=train_dataset,
                                  batch_size=hp.batch_size,
                                  shuffle=True,
                                  num_workers=4,
-                                 collate_fn=pad)
+                                 collate_fn=_pad)
     eval_iter = data.DataLoader(dataset=eval_dataset,
                                  batch_size=hp.batch_size,
                                  shuffle=False,
                                  num_workers=4,
-                                 collate_fn=pad)
+                                 collate_fn=_pad)
 
     optimizer = optim.Adam(model.parameters(), lr = hp.lr)
     criterion = nn.CrossEntropyLoss(ignore_index=0)
