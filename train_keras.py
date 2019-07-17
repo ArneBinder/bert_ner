@@ -100,6 +100,7 @@ if __name__=="__main__":
     y_train = to_categorical(train_dataset.y, num_classes=len(tagset))
     y_eval = to_categorical(eval_dataset.y, num_classes=len(tagset))
 
+    print('encode tokens with BERT...')
     x_train_encoded = train_dataset.x_bertencoded()
     x_eval_encoded = eval_dataset.x_bertencoded()
     assert x_train_encoded.shape[1:] == x_eval_encoded.shape[1:], 'shape mismatch for bert encoded sequences'

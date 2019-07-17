@@ -40,64 +40,65 @@ tokenizer = BertTokenizer.from_pretrained('bert-base-cased', do_lower_case=False
 #idx2tag = {idx: tag for idx, tag in enumerate(VOCAB)}
 
 class ConllDataset(data.Dataset):
-    def __init__(self, fpath, bert_model=None, tagset=None):
+    def __init__(self, fpath, bert_model=None, tagset=None, cache_dir='cache'):
         """
         fpath: [train|valid|test].txt
         """
-        cache_fn = f'dataset_{fpath.split("/")[-1]}.pkl'
-        loaded = None
-        if os.path.exists:
-            loaded = pickle.load(open(cache_fn, 'rb'))
-
         self.bert_model = bert_model
         if self.bert_model is None:
             print('load BERT model...')
             self.bert_model = BertModel.from_pretrained('bert-base-cased').eval()
 
-        print('load data from: %s...' % fpath)
-        entries = open(fpath, 'r').read().strip().split("\n\n")
-        self.maxlen = -1
-        self.words_str = []
-        self.x = []
-        self.is_heads = []
-        self.tags_str = []
-        self.t = []
-        self.seqlen = []
-        for entry in entries:
-            words = [line.split()[0] for line in entry.splitlines()]
-            tags = ([line.split()[-1] for line in entry.splitlines()])
-            sent = ["[CLS]"] + words + ["[SEP]"]
-            sent_tags = ["<PAD>"] + tags + ["<PAD>"]
-            words, x, is_heads, tags, t = self.convert_to_record(sent, sent_tags)
-            self.words_str.append(words)
-            self.x.append(x)
-            self.is_heads.append(is_heads)
-            self.tags_str.append(tags)
-            self.t.append(t)
-            self.maxlen = max(len(x), self.maxlen)
-            self.seqlen.append(len(x))
-        print('loaded %i entries. maxlen: %i' % (len(self.x), self.maxlen))
+        os.makedirs(cache_dir, exist_ok=True)
+        print('process data from: %s...' % fpath)
+        cache_fn = os.path.join(cache_dir, f'dataset_{fpath.split("/")[-1]}.pkl')
+        if os.path.exists(cache_fn):
+            print('cached dataset found. load {cache_fn}...'  )
+            loaded = pickle.load(open(cache_fn, 'rb'))
+            for k, v in loaded.items():
+                self.__setattr__(k, v)
+            print(f'loaded data for keys: {", ".join(loaded.keys())}')
+            self.tag2idx = {tag: idx for idx, tag in enumerate(self.tagset)}
+            self.idx2tag = {idx: tag for idx, tag in enumerate(self.tagset)}
 
-        self.tagset = tagset
-        # create vocab from all tags (move padding tag to idx=0)
-        if self.tagset is None:
-            self.tagset = ['<PAD>'] + list(set(chain(*self.t)) - {'<PAD>'})
-        self.tag2idx = {tag: idx for idx, tag in enumerate(self.tagset)}
-        self.idx2tag = {idx: tag for idx, tag in enumerate(self.tagset)}
+        else:
+            entries = open(fpath, 'r').read().strip().split("\n\n")
+            self.maxlen = -1
+            self.words_str = []
+            self.x = []
+            self.is_heads = []
+            self.tags_str = []
+            self.t = []
+            for entry in entries:
+                words = [line.split()[0] for line in entry.splitlines()]
+                tags = ([line.split()[-1] for line in entry.splitlines()])
+                sent = ["[CLS]"] + words + ["[SEP]"]
+                sent_tags = ["<PAD>"] + tags + ["<PAD>"]
+                words, x, is_heads, tags, t = self.convert_to_record(sent, sent_tags)
+                self.words_str.append(words)
+                self.x.append(x)
+                self.is_heads.append(is_heads)
+                self.tags_str.append(tags)
+                self.t.append(t)
+                self.maxlen = max(len(x), self.maxlen)
+            print('loaded %i entries. maxlen: %i' % (len(self.x), self.maxlen))
 
-        print('convert tags to indices...')
-        self.y = []
-        for i, tags in enumerate(self.t):
-            assert len(self.x[i]) == len(tags), f'number of tags [{len(self.x[i])}] does not match number of tokens {len(tags)}'
-            yy = [self.tag2idx[t] for t in tags]
-            self.y.append(yy)
+            self.tagset = tagset
+            # create vocab from all tags (move padding tag to idx=0)
+            if self.tagset is None:
+                self.tagset = ['<PAD>'] + list(set(chain(*self.t)) - {'<PAD>'})
+            self.tag2idx = {tag: idx for idx, tag in enumerate(self.tagset)}
+            self.idx2tag = {idx: tag for idx, tag in enumerate(self.tagset)}
+            print('convert tags to indices...')
+            self.y = []
+            for i, tags in enumerate(self.t):
+                assert len(self.x[i]) == len(tags), f'number of tags [{len(self.x[i])}] does not match number of tokens {len(tags)}'
+                yy = [self.tag2idx[t] for t in tags]
+                self.y.append(yy)
 
-        if loaded is not None:
-            #format in loaded: self.words, self.x, self.is_heads, self.tags, self.y, self.seqlen
-            for i, data in enumerate([self.words_str, self.x, self.is_heads, self.tags_str, self.y, self.seqlen]):
-                assert all([loaded[i][j] == x for j, x in enumerate(data)]), f'mismatch @{i}: {json.dumps(data, indent=2)} vs {json.dumps(loaded[i], indent=2)}'
-            print('data matches loaded')
-
+            print(f'dump dataset to {cache_fn}...')
+            pickle.dump({'words_str': self.words_str, 'x': self.x, 'is_heads': self.is_heads, 'tags_str': self.tags_str, 'y': self.y, 'tagset': self.tagset, 'maxlen': self.maxlen},
+                        open(cache_fn, 'wb'))
 
     def convert_to_record(self, words, tags):
         # We give credits only to the first piece.
@@ -150,9 +151,6 @@ class ConllDataset(data.Dataset):
 
     def x_bertencoded(self):
         return self.encode_with_bert(self.x)
-
-    def y_bertencoded(self):
-        return self.encode_with_bert(self.y)
 
     def vocab_size(self):
         return len(tokenizer.vocab)
