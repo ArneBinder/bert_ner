@@ -67,6 +67,24 @@ def encode_with_bert(bert_model, sequences, return_layers=-1):
     return encs.detach().cpu().numpy()
 
 
+def get_model(n_classes, lr, top_rnns=True):
+    #input_words = Input(shape=(maxlen,), dtype='int32', name='word_ids')
+    input = Input(shape=bert_output_shape, dtype=bert_output_dtype, name='bert_encodings')
+    X = input
+    if top_rnns:
+        X = Bidirectional(LSTM(768 // 2, dropout=0.2, recurrent_dropout=0.2, return_sequences=True))(X)
+        X = Bidirectional(LSTM(768 // 2, dropout=0.2, recurrent_dropout=0.2, return_sequences=True))(X)
+    pred = Dense(n_classes, activation='softmax')(X)
+    model = Model(input, pred)
+    optimizer = Adam(lr=lr)
+    model.compile(loss='categorical_crossentropy',
+                  optimizer=optimizer
+                  )
+    plot_model(model, to_file='model.png', show_shapes=True)
+    return model
+
+
+
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch_size", type=int, default=128)
@@ -107,22 +125,7 @@ if __name__=="__main__":
     bert_output_dtype = x_train_encoded.dtype
 
     print('Build model...')
-    input_words = Input(shape=(maxlen, ), dtype='int32', name='word_ids')
-    input = Input(shape=bert_output_shape, dtype=bert_output_dtype, name='bert_encodings')
-    X = input
-    if args.top_rnns:
-        X = Bidirectional(LSTM(768 // 2, dropout=0.2, recurrent_dropout=0.2, return_sequences=True))(X)
-        X = Bidirectional(LSTM(768 // 2, dropout=0.2, recurrent_dropout=0.2, return_sequences=True))(X)
-    pred = Dense(len(VOCAB), activation='softmax')(X)
-    model = Model(input, pred)
-
-    optimizer = Adam(lr=args.lr)
-    #metrics = Metrics()
-    model.compile(loss='categorical_crossentropy',
-                  optimizer=optimizer,
-                  #metrics=['accuracy']
-                  )
-    plot_model(model, to_file='model.png', show_shapes=True)
+    model = get_model(n_classes=len(VOCAB), lr=args.lr, top_rnns=args.top_rnns)
 
 
     print('Train with batch_size=%i...' % args.batch_size)
