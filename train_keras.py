@@ -17,6 +17,10 @@ from data_load import NerDataset, VOCAB
 
 # taken from https://datascience.stackexchange.com/questions/13746/how-to-define-a-custom-performance-metric-in-keras
 class Metrics(keras.callbacks.Callback):
+    def __init__(self, val_is_heads):
+        super(Metrics, self).__init__()
+        self.val_is_heads_mask = val_is_heads.reshape((-1,)).astype(bool)
+
     def on_train_begin(self, logs={}):
         self.confusion = []
         self.precision = []
@@ -26,21 +30,27 @@ class Metrics(keras.callbacks.Callback):
         self.auc = []
 
     def on_epoch_end(self, epoch, logs={}):
-        # TODO: exclude padded items
-        # TODO: how to handle <PAD> predictions?
         score = np.asarray(self.model.predict(self.validation_data[0]))
         predict = np.round(np.asarray(self.model.predict(self.validation_data[0])))
         targ = self.validation_data[1]
 
-        score = score.reshape((-1, score.shape[-1]))
-        predict = predict.reshape((-1, predict.shape[-1]))
-        targ = targ.reshape((-1, targ.shape[-1]))
+        # flatten and mask for heads
+        score = score.reshape((-1, score.shape[-1]))[self.val_is_heads_mask]
+        predict = predict.reshape((-1, predict.shape[-1]))[self.val_is_heads_mask]
+        targ = targ.reshape((-1, targ.shape[-1]))[self.val_is_heads_mask]
 
         #self.auc.append(sklm.roc_auc_score(targ, score))
         #self.confusion.append(sklm.confusion_matrix(targ, predict))
+        #if sum(np.max(predict, axis=-1)) < len(predict):
+        #print('WARNING: Precision is ill-defined and being set to 0.0 in labels with no predicted samples.')
         self.precision.append(sklm.precision_score(targ, predict, average='macro'))
+        #if sum(np.max(targ, axis=-1)) < len(targ):
+        #print('WARNING: Recall is ill-defined and being set to 0.0 in labels with no true samples.')
         self.recall.append(sklm.recall_score(targ, predict, average='macro'))
-        self.f1s.append(sklm.f1_score(targ, predict, average='macro'))
+        if self.precision[-1] == 0.0 or self.recall[-1] == 0.0:
+            self.f1s.append(0.0)
+        else:
+            self.f1s.append(2 * self.precision[-1] * self.recall[-1] / (self.precision[-1] + self.recall[-1]))
         #self.kappa.append(sklm.cohen_kappa_score(targ, predict))
 
         print('val_f1: %f — val_precision: %f — val_recall %f' % (self.f1s[-1], self.precision[-1], self.recall[-1]))
@@ -80,11 +90,11 @@ if __name__=="__main__":
     vocab_size = train_dataset.vocab_size()
     print('tokenizer vocab size: %i' % vocab_size)
 
-    xy_traineval = [train_dataset.x, train_dataset.y, eval_dataset.x, eval_dataset.y]
+    xy_traineval = [train_dataset.x, train_dataset.y, eval_dataset.x, eval_dataset.y, eval_dataset.is_heads]
     for i, data in enumerate(xy_traineval):
         xy_traineval[i] = sequence.pad_sequences(data, maxlen=maxlen, padding='post')
         print('data shape:', xy_traineval[i].shape)
-    x_train, y_train, x_eval, y_eval = xy_traineval
+    x_train, y_train, x_eval, y_eval, is_heads_eval = xy_traineval
     y_train = to_categorical(y_train, num_classes=len(VOCAB))
     y_eval = to_categorical(y_eval, num_classes=len(VOCAB))
 
@@ -116,7 +126,7 @@ if __name__=="__main__":
 
 
     print('Train with batch_size=%i...' % args.batch_size)
-    metrics = Metrics()
+    metrics = Metrics(val_is_heads=is_heads_eval)
     model.fit(x_train_encoded, y_train,
               batch_size=args.batch_size,
               epochs=args.n_epochs,
