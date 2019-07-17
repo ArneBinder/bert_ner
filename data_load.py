@@ -37,8 +37,6 @@ from tqdm import tqdm
 
 tokenizer = BertTokenizer.from_pretrained('bert-base-cased', do_lower_case=False)
 
-#tag2idx = {tag: idx for idx, tag in enumerate(VOCAB)}
-#idx2tag = {idx: tag for idx, tag in enumerate(VOCAB)}
 
 class ConllDataset(data.Dataset):
     def __init__(self, fpath, bert_model=None, tagset=None, cache_dir='cache'):
@@ -46,69 +44,93 @@ class ConllDataset(data.Dataset):
         fpath: [train|valid|test].txt
         """
         self.bert_model = bert_model
-        if self.bert_model is None:
-            print('load BERT model...')
-            self.bert_model = BertModel.from_pretrained('bert-base-cased').eval()
+        #if self.bert_model is None:
+        #    print('load BERT model...')
+        #    self.bert_model = BertModel.from_pretrained('bert-base-cased').eval()
 
         self.cache_dir = cache_dir
         os.makedirs(self.cache_dir, exist_ok=True)
         print('process data from: %s...' % fpath)
-        self.cache_base_fn = os.path.join(self.cache_dir, f'{fpath.split("/")[-1]}')
-        cache_dataset_fn = self.cache_base_fn + '_dataset.json'
-        if os.path.exists(cache_dataset_fn):
-            print('cached dataset found. load {cache_fn}...'  )
-            #loaded = pickle.load(open(cache_dataset_fn, 'rb'))
-            loaded = json.load(open(cache_dataset_fn))
-            for k, v in loaded.items():
-                self.__setattr__(k, v)
-            print(f'loaded data for keys: {", ".join(loaded.keys())}')
-            self.tag2idx = {tag: idx for idx, tag in enumerate(self.tagset)}
-            self.idx2tag = {idx: tag for idx, tag in enumerate(self.tagset)}
+        self.cache_base_fn = os.path.join(self.cache_dir, f'{fpath.split("/")[-1]}_')
+
+        all_data = self.calc_cached(func=self.load_dataset, fn='dataset.json', fpath=fpath, tagset=tagset)
+        for k, v in all_data.items():
+            self.__setattr__(k, v)
+
+    def load_dataset(self, fpath, tagset):
+        entries = open(fpath, 'r').read().strip().split("\n\n")
+        maxlen = -1
+        words_str = []
+        x = []
+        is_heads = []
+        tags_str = []
+        t = []
+        for entry in entries:
+            words = [line.split()[0] for line in entry.splitlines()]
+            tags = ([line.split()[-1] for line in entry.splitlines()])
+            sent = ["[CLS]"] + words + ["[SEP]"]
+            sent_tags = ["<PAD>"] + tags + ["<PAD>"]
+            c_words, c_x, c_is_heads, c_tags, c_t = self.convert_to_record(sent, sent_tags)
+            words_str.append(c_words)
+            x.append(c_x)
+            is_heads.append(c_is_heads)
+            tags_str.append(c_tags)
+            t.append(c_t)
+            maxlen = max(len(c_x), maxlen)
+        print('loaded %i entries. maxlen: %i' % (len(x), maxlen))
+
+        # create vocab from all tags (move padding tag to idx=0)
+        if tagset is None:
+            tagset = ['<PAD>'] + list(set(chain(*t)) - {'<PAD>'})
+        tag2idx = {tag: idx for idx, tag in enumerate(tagset)}
+        #idx2tag = {idx: tag for idx, tag in enumerate(tagset)}
+        print('convert tags to indices...')
+        y = []
+        for i, tags in enumerate(t):
+            assert len(x[i]) == len(
+                tags), f'number of tags [{len(self.x[i])}] does not match number of tokens {len(tags)}'
+            yy = [tag2idx[t] for t in tags]
+            y.append(yy)
+
+        return {'words_str': words_str,
+                    'x': x,
+                    'is_heads': is_heads,
+                    'tags_str': tags_str,
+                    'y': y,
+                    'tagset': tagset,
+                    'maxlen': maxlen}
+
+
+    def calc_cached(self, func, fn, *args, **kwargs):
+        full_fn = self.cache_base_fn + fn
+        if fn.endswith('.json'):
+            if os.path.exists(full_fn):
+                print(f'load from cache {full_fn}...')
+                res = json.load(open(full_fn))
+            else:
+                res = func(*args, **kwargs)
+                print(f'save to cache {full_fn}...')
+                json.dump(res, open(full_fn, 'w'))
+        elif fn.endswith('.pkl'):
+            if os.path.exists(full_fn):
+                print(f'load from cache {full_fn}...')
+                res = pickle.load(open(full_fn))
+            else:
+                res = func(*args, **kwargs)
+                print(f'save to cache {full_fn}...')
+                pickle.dump(res, open(full_fn, 'wb'))
+        elif fn.endswith('.npy'):
+            if os.path.exists(full_fn):
+                print(f'load from cache {full_fn}...')
+                res = np.load(full_fn)
+            else:
+                res = func(*args, **kwargs)
+                print(f'save to cache {full_fn}...')
+                np.save(res, full_fn)
         else:
-            entries = open(fpath, 'r').read().strip().split("\n\n")
-            self.maxlen = -1
-            self.words_str = []
-            self.x = []
-            self.is_heads = []
-            self.tags_str = []
-            self.t = []
-            for entry in entries:
-                words = [line.split()[0] for line in entry.splitlines()]
-                tags = ([line.split()[-1] for line in entry.splitlines()])
-                sent = ["[CLS]"] + words + ["[SEP]"]
-                sent_tags = ["<PAD>"] + tags + ["<PAD>"]
-                words, x, is_heads, tags, t = self.convert_to_record(sent, sent_tags)
-                self.words_str.append(words)
-                self.x.append(x)
-                self.is_heads.append(is_heads)
-                self.tags_str.append(tags)
-                self.t.append(t)
-                self.maxlen = max(len(x), self.maxlen)
-            print('loaded %i entries. maxlen: %i' % (len(self.x), self.maxlen))
+            raise NotImplementedError(f'Unknown cache file extension: {fn}. Use either json, pkl or npy.')
+        return res
 
-            self.tagset = tagset
-            # create vocab from all tags (move padding tag to idx=0)
-            if self.tagset is None:
-                self.tagset = ['<PAD>'] + list(set(chain(*self.t)) - {'<PAD>'})
-            self.tag2idx = {tag: idx for idx, tag in enumerate(self.tagset)}
-            self.idx2tag = {idx: tag for idx, tag in enumerate(self.tagset)}
-            print('convert tags to indices...')
-            self.y = []
-            for i, tags in enumerate(self.t):
-                assert len(self.x[i]) == len(tags), f'number of tags [{len(self.x[i])}] does not match number of tokens {len(tags)}'
-                yy = [self.tag2idx[t] for t in tags]
-                self.y.append(yy)
-
-            print(f'dump dataset to {cache_dataset_fn}...')
-            all_data = {'words_str': self.words_str,
-                        'x': self.x,
-                        'is_heads': self.is_heads,
-                        'tags_str': self.tags_str,
-                        'y': self.y,
-                        'tagset': self.tagset,
-                        'maxlen': self.maxlen}
-            json.dump(all_data, open(cache_dataset_fn, 'w'))
-            #pickle.dump(all_data, open(cache_dataset_fn, 'wb'))
 
     def convert_to_record(self, words, tags):
         # We give credits only to the first piece.
@@ -161,15 +183,7 @@ class ConllDataset(data.Dataset):
         return np.concatenate(encs_list, axis=0)
 
     def x_bertencoded(self):
-        cache_fn = self.cache_base_fn + '_xencoded.npy'
-        if os.path.exists(cache_fn):
-            print(f'load encoded x from file: {cache_fn}')
-            res = np.load(cache_fn)
-        else:
-            res = self.encode_with_bert(self.x)
-            print(f'save encoded x to file: {cache_fn}')
-            np.save(cache_fn, res)
-        return res
+        return self.calc_cached(func=self.encode_with_bert, fn='xencoded.npy', sequences=self.x)
 
     def vocab_size(self):
         return len(tokenizer.vocab)
