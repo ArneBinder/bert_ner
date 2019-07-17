@@ -22,126 +22,140 @@ tags: list of tags.['O O B-MISC ...', '...']
 y: encoded tags. [N, T]. int64
 seqlens: list of seqlens. [45, 49, 10, 50, ...]
 '''
+import json
+import os
 import pickle
+from itertools import chain
 
 import numpy as np
 import torch
 from torch.utils import data
+from keras_preprocessing import sequence
 
-from pytorch_pretrained_bert import BertTokenizer
+from pytorch_pretrained_bert import BertTokenizer, BertModel
 
 tokenizer = BertTokenizer.from_pretrained('bert-base-cased', do_lower_case=False)
-VOCAB = ('<PAD>', 'O', 'I-LOC', 'B-PER', 'I-PER', 'I-ORG', 'I-MISC', 'B-MISC', 'B-LOC', 'B-ORG')
-tag2idx = {tag: idx for idx, tag in enumerate(VOCAB)}
-idx2tag = {idx: tag for idx, tag in enumerate(VOCAB)}
 
-def convert_to_record(words, tags):
-    # We give credits only to the first piece.
-    x, y = [], []  # list of ids
-    is_heads = []  # list. 1: the token is the first piece of a word
-    for w, t in zip(words, tags):
-        tokens = tokenizer.tokenize(w) if w not in ("[CLS]", "[SEP]") else [w]
-        xx = tokenizer.convert_tokens_to_ids(tokens)
+#tag2idx = {tag: idx for idx, tag in enumerate(VOCAB)}
+#idx2tag = {idx: tag for idx, tag in enumerate(VOCAB)}
 
-        is_head = [1] + [0] * (len(tokens) - 1)
-
-        t = [t] + ["<PAD>"] * (len(tokens) - 1)  # <PAD>: no decision
-        yy = [tag2idx[each] for each in t]  # (T,)
-
-        x.extend(xx)
-        is_heads.extend(is_head)
-        y.extend(yy)
-
-    assert len(x) == len(y) == len(is_heads), f"len(x)={len(x)}, len(y)={len(y)}, len(is_heads)={len(is_heads)}"
-
-    # seqlen
-    seqlen = len(y)
-
-    # to string
-    words = " ".join(words)
-    tags = " ".join(tags)
-    return words, x, is_heads, tags, y, seqlen
-
-class NerDataset(data.Dataset):
-    def __init__(self, fpath):
+class ConllDataset(data.Dataset):
+    def __init__(self, fpath, bert_model=None, tagset=None):
         """
         fpath: [train|valid|test].txt
         """
-        self.maxlen = -1
+        cache_fn = f'dataset_{fpath.split("/")[-1]}.pkl'
+        loaded = None
+        if os.path.exists:
+            loaded = pickle.load(open(cache_fn, 'rb'))
+
+        self.bert_model = bert_model
+        if self.bert_model is None:
+            print('load BERT model...')
+            self.bert_model = BertModel.from_pretrained('bert-base-cased').eval()
+
+        print('load data from: %s...' % fpath)
         entries = open(fpath, 'r').read().strip().split("\n\n")
-        #sents, tags_li = [], [] # list of lists
-        #records = []
-        self.words = []
+        self.maxlen = -1
+        self.words_str = []
         self.x = []
         self.is_heads = []
-        self.tags = []
-        self.y = []
+        self.tags_str = []
+        self.t = []
         self.seqlen = []
         for entry in entries:
             words = [line.split()[0] for line in entry.splitlines()]
             tags = ([line.split()[-1] for line in entry.splitlines()])
             sent = ["[CLS]"] + words + ["[SEP]"]
             sent_tags = ["<PAD>"] + tags + ["<PAD>"]
-            words, x, is_heads, tags, y, seqlen = convert_to_record(sent, sent_tags)
-            self.words.append(words)
+            words, x, is_heads, tags, t = self.convert_to_record(sent, sent_tags)
+            self.words_str.append(words)
             self.x.append(x)
             self.is_heads.append(is_heads)
-            self.tags.append(tags)
-            self.y.append(y)
-            self.seqlen.append(seqlen)
-            self.maxlen = max(seqlen, self.maxlen)
+            self.tags_str.append(tags)
+            self.t.append(t)
+            self.maxlen = max(len(x), self.maxlen)
+            self.seqlen.append(len(x))
+        print('loaded %i entries. maxlen: %i' % (len(self.x), self.maxlen))
 
-            #records.append((words, x, is_heads, tags, y, seqlen))
-            #sents.append(sent)
-            #tags_li.append(sent_tags)
-        #self.sents, self.tags_li = sents, tags_li
-        #self.records = records
+        self.tagset = tagset
+        # create vocab from all tags (move padding tag to idx=0)
+        if self.tagset is None:
+            self.tagset = ['<PAD>'] + list(set(chain(*self.t)) - {'<PAD>'})
+        self.tag2idx = {tag: idx for idx, tag in enumerate(self.tagset)}
+        self.idx2tag = {idx: tag for idx, tag in enumerate(self.tagset)}
+
+        print('convert tags to indices...')
+        self.y = []
+        for i, tags in enumerate(self.t):
+            assert len(self.x[i]) == len(tags), f'number of tags [{len(self.x[i])}] does not match number of tokens {len(tags)}'
+            yy = [self.tag2idx[t] for t in tags]
+            self.y.append(yy)
+
+        if loaded is not None:
+            #format in loaded: self.words, self.x, self.is_heads, self.tags, self.y, self.seqlen
+            for i, data in enumerate([self.words_str, self.x, self.is_heads, self.tags_str, self.y, self.seqlen]):
+                assert all([loaded[i][j] == x for j, x in enumerate(data)]), f'mismatch @{i}: {json.dumps(data, indent=2)} vs {json.dumps(loaded[i], indent=2)}'
+            print('data matches loaded')
 
 
-        pickle.dump([self.words, self.x, self.is_heads, self.tags, self.y, self.seqlen], open(f'dataset_{fpath.split("/")[-1]}.pkl', 'wb'))
+    def convert_to_record(self, words, tags):
+        # We give credits only to the first piece.
+        x, t = [], []  # list of ids
+        is_heads = []  # list. 1: the token is the first piece of a word
+        for word, tag in zip(words, tags):
+            tokens = tokenizer.tokenize(word) if word not in ("[CLS]", "[SEP]") else [word]
+            xx = tokenizer.convert_tokens_to_ids(tokens)
 
+            is_head = [1] + [0] * (len(tokens) - 1)
+
+            tag = [tag] + ["<PAD>"] * (len(tokens) - 1)  # <PAD>: no decision
+            #yy = [self.tag2idx[each] for each in tag]  # (T,)
+
+            x.extend(xx)
+            is_heads.extend(is_head)
+            t.extend(tag)
+
+        assert len(x) == len(t) == len(is_heads), f"len(x)={len(x)}, len(t)={len(t)}, len(is_heads)={len(is_heads)}"
+
+        # to string
+        words = " ".join(words)
+        tags = " ".join(tags)
+        return words, x, is_heads, tags, t
 
     def __len__(self):
         return len(self.x)
 
     def __getitem__(self, idx):
-        return self.words[idx], self.x[idx], self.is_heads[idx], self.tags[idx], self.y[idx], self.seqlen[idx]
+        return self.words_str[idx], self.x[idx], self.is_heads[idx], self.tags_str[idx], self.y[idx], self.seqlen[idx]
 
-    #def get_xy(self):
-        #words, x, is_heads, tags, y, seqlen = zip(*self.records)
-        #return list(x), list(y)
+    def pad_to_numpy(self, maxlen: int, padding='post'):
+        print('pad x, y and is_heads...')
+        self.x = sequence.pad_sequences(self.x, maxlen=maxlen, padding=padding)
+        self.y = sequence.pad_sequences(self.y, maxlen=maxlen, padding=padding)
+        self.is_heads = sequence.pad_sequences(self.is_heads, maxlen=maxlen, padding=padding)
+
+    def encode_with_bert(self, sequences: np.ndarray, return_layers=-1, batch_size=32):
+        assert isinstance(sequences, np.ndarray), 'sequences has to be an ndarray. Did you call pad_to_numpy(maxlen)?'
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.bert_model.to(device)
+        encs_list = []
+        with torch.no_grad():
+            for i in range(0, len(sequences), batch_size):
+                sequences_tensor = torch.LongTensor(sequences[i:(i + batch_size)]).to(device)
+                encoded_layers, _ = self.bert_model(sequences_tensor)
+                encs = encoded_layers[return_layers]
+                encs_list.append(encs)
+        return np.concatenate(encs_list, axis=0)
+
+    def x_bertencoded(self):
+        return self.encode_with_bert(self.x)
+
+    def y_bertencoded(self):
+        return self.encode_with_bert(self.y)
 
     def vocab_size(self):
         return len(tokenizer.vocab)
-
-    def old_getitem(self, idx):
-        words, tags = self.sents[idx], self.tags_li[idx] # words, tags: string list
-
-        # We give credits only to the first piece.
-        x, y = [], [] # list of ids
-        is_heads = [] # list. 1: the token is the first piece of a word
-        for w, t in zip(words, tags):
-            tokens = tokenizer.tokenize(w) if w not in ("[CLS]", "[SEP]") else [w]
-            xx = tokenizer.convert_tokens_to_ids(tokens)
-
-            is_head = [1] + [0]*(len(tokens) - 1)
-
-            t = [t] + ["<PAD>"] * (len(tokens) - 1)  # <PAD>: no decision
-            yy = [tag2idx[each] for each in t]  # (T,)
-
-            x.extend(xx)
-            is_heads.extend(is_head)
-            y.extend(yy)
-
-        assert len(x)==len(y)==len(is_heads), f"len(x)={len(x)}, len(y)={len(y)}, len(is_heads)={len(is_heads)}"
-
-        # seqlen
-        seqlen = len(y)
-
-        # to string
-        words = " ".join(words)
-        tags = " ".join(tags)
-        return words, x, is_heads, tags, y, seqlen
 
 
 def pad(batch, maxlen=None):

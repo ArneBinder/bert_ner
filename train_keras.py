@@ -12,7 +12,7 @@ import keras.backend as K
 import numpy as np
 import sklearn.metrics as sklm
 
-from data_load import NerDataset, VOCAB
+from data_load import ConllDataset
 
 
 # taken from https://datascience.stackexchange.com/questions/13746/how-to-define-a-custom-performance-metric-in-keras
@@ -96,40 +96,40 @@ if __name__=="__main__":
     #parser.add_argument("--logdir", type=str, default="checkpoints/01")
     parser.add_argument("--trainset", type=str, default="conll2003/train.txt")
     parser.add_argument("--validset", type=str, default="conll2003/valid.txt")
+    parser.add_argument("--use_default_tagset", dest="use_default_tagset", action="store_true")
     args = parser.parse_args()
 
+    print('Embed sequences with BERT...')
+    bert = BertModel.from_pretrained('bert-base-cased').eval()
     print('Loading data...')
-    train_dataset = NerDataset(args.trainset)
-    eval_dataset = NerDataset(args.validset)
-    print('train_dataset.maxlen: %i' % train_dataset.maxlen)
-    print('eval_dataset.maxlen: %i' % eval_dataset.maxlen)
+    default_tagset = None
+    if args.use_default_tagset:
+        default_tagset = ('<PAD>', 'O', 'I-LOC', 'B-PER', 'I-PER', 'I-ORG', 'I-MISC', 'B-MISC', 'B-LOC', 'B-ORG')
+    eval_dataset = ConllDataset(args.validset, bert_model=bert, tagset=default_tagset)
+    train_dataset = ConllDataset(args.trainset, bert_model=eval_dataset.bert_model, tagset=eval_dataset.tagset)
+    tagset = eval_dataset.tagset
+
     maxlen = max(train_dataset.maxlen, eval_dataset.maxlen)
     assert train_dataset.vocab_size() == eval_dataset.vocab_size(), 'train_dataset.vocab_size [%i] != eval_dataset.vocab_size [%i]' % (train_dataset.vocab_size(), eval_dataset.vocab_size())
     vocab_size = train_dataset.vocab_size()
     print('tokenizer vocab size: %i' % vocab_size)
+    train_dataset.pad_to_numpy(maxlen=maxlen)
+    eval_dataset.pad_to_numpy(maxlen=maxlen)
+    y_train = to_categorical(train_dataset.y, num_classes=len(tagset))
+    y_eval = to_categorical(eval_dataset.y, num_classes=len(tagset))
 
-    xy_traineval = [train_dataset.x, train_dataset.y, eval_dataset.x, eval_dataset.y, eval_dataset.is_heads]
-    for i, data in enumerate(xy_traineval):
-        xy_traineval[i] = sequence.pad_sequences(data, maxlen=maxlen, padding='post')
-        print('data shape:', xy_traineval[i].shape)
-    x_train, y_train, x_eval, y_eval, is_heads_eval = xy_traineval
-    y_train = to_categorical(y_train, num_classes=len(VOCAB))
-    y_eval = to_categorical(y_eval, num_classes=len(VOCAB))
-
-    print('Embed sequences with BERT...')
-    bert = BertModel.from_pretrained('bert-base-cased').eval()
-    x_train_encoded = encode_with_bert(bert, x_train)
-    x_eval_encoded = encode_with_bert(bert, x_eval)
+    x_train_encoded = encode_with_bert(bert, train_dataset.x)
+    x_eval_encoded = encode_with_bert(bert, eval_dataset.x)
     assert x_train_encoded.shape[1:] == x_eval_encoded.shape[1:], 'shape mismatch for bert encoded sequences'
     bert_output_shape = x_train_encoded.shape[1:]
     bert_output_dtype = x_train_encoded.dtype
 
     print('Build model...')
-    model = get_model(n_classes=len(VOCAB), lr=args.lr, top_rnns=args.top_rnns)
+    model = get_model(n_classes=len(tagset), lr=args.lr, top_rnns=args.top_rnns)
 
 
     print('Train with batch_size=%i...' % args.batch_size)
-    metrics = Metrics(val_is_heads=is_heads_eval)
+    metrics = Metrics(val_is_heads=eval_dataset.is_heads)
     model.fit(x_train_encoded, y_train,
               batch_size=args.batch_size,
               epochs=args.n_epochs,
