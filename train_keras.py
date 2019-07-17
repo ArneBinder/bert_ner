@@ -46,51 +46,6 @@ class Metrics(keras.callbacks.Callback):
         print('val_f1: %f — val_precision: %f — val_recall %f' % (self.f1s[-1], self.precision[-1], self.recall[-1]))
         return
 
-# taken from https://datascience.stackexchange.com/questions/13746/how-to-define-a-custom-performance-metric-in-keras
-# RETURNS NANs
-def f1_score(y_true, y_pred):
-    """
-    f1 score
-
-    :param y_true:
-    :param y_pred:
-    :return:
-    """
-    y_true = K.batch_flatten(y_true)
-    y_pred = K.batch_flatten(y_pred)
-
-    tp_3d = K.concatenate(
-        [
-            K.cast(y_true, 'bool'),
-            K.cast(K.round(y_pred), 'bool'),
-            K.cast(K.ones_like(y_pred), 'bool')
-        ], axis=1
-    )
-
-    fp_3d = K.concatenate(
-        [
-            K.cast(K.abs(y_true - K.ones_like(y_true)), 'bool'),
-            K.cast(K.round(y_pred), 'bool'),
-            K.cast(K.ones_like(y_pred), 'bool')
-        ], axis=1
-    )
-
-    fn_3d = K.concatenate(
-        [
-            K.cast(y_true, 'bool'),
-            K.cast(K.abs(K.round(y_pred) - K.ones_like(y_pred)), 'bool'),
-            K.cast(K.ones_like(y_pred), 'bool')
-        ], axis=1
-    )
-
-    tp = K.sum(K.cast(K.all(tp_3d, axis=1), 'int32'))
-    fp = K.sum(K.cast(K.all(fp_3d, axis=1), 'int32'))
-    fn = K.sum(K.cast(K.all(fn_3d, axis=1), 'int32'))
-
-    precision = tp / (tp + fp)
-    recall = tp / (tp + fn)
-    return 2 * ((precision * recall) / (precision + recall))
-
 
 def encode_with_bert(bert_model, sequences, return_layers=-1):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -125,9 +80,7 @@ if __name__=="__main__":
     vocab_size = train_dataset.vocab_size()
     print('tokenizer vocab size: %i' % vocab_size)
 
-    x_train, y_train = train_dataset.get_xy()
-    x_eval, y_eval = eval_dataset.get_xy()
-    xy_traineval = [x_train, y_train, x_eval, y_eval]
+    xy_traineval = [train_dataset.x, train_dataset.y, eval_dataset.x, eval_dataset.y]
     for i, data in enumerate(xy_traineval):
         xy_traineval[i] = sequence.pad_sequences(data, maxlen=maxlen, padding='post')
         print('data shape:', xy_traineval[i].shape)

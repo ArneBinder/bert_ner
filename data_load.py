@@ -68,30 +68,43 @@ class NerDataset(data.Dataset):
         self.maxlen = -1
         entries = open(fpath, 'r').read().strip().split("\n\n")
         #sents, tags_li = [], [] # list of lists
-        records = []
+        #records = []
+        self.words = []
+        self.x = []
+        self.is_heads = []
+        self.tags = []
+        self.y = []
+        self.seqlen = []
         for entry in entries:
             words = [line.split()[0] for line in entry.splitlines()]
             tags = ([line.split()[-1] for line in entry.splitlines()])
             sent = ["[CLS]"] + words + ["[SEP]"]
             sent_tags = ["<PAD>"] + tags + ["<PAD>"]
             words, x, is_heads, tags, y, seqlen = convert_to_record(sent, sent_tags)
+            self.words.append(words)
+            self.x.append(x)
+            self.is_heads.append(is_heads)
+            self.tags.append(tags)
+            self.y.append(y)
+            self.seqlen.append(seqlen)
             self.maxlen = max(seqlen, self.maxlen)
 
-            records.append((words, x, is_heads, tags, y, seqlen))
+            #records.append((words, x, is_heads, tags, y, seqlen))
             #sents.append(sent)
             #tags_li.append(sent_tags)
         #self.sents, self.tags_li = sents, tags_li
-        self.records = records
+        #self.records = records
+
 
     def __len__(self):
-        return len(self.records)
+        return len(self.x)
 
     def __getitem__(self, idx):
-        return self.records[idx]
+        return self.words[idx], self.x[idx], self.is_heads[idx], self.tags[idx], self.y[idx], self.seqlen[idx]
 
-    def get_xy(self):
-        words, x, is_heads, tags, y, seqlen = zip(*self.records)
-        return list(x), list(y)
+    #def get_xy(self):
+        #words, x, is_heads, tags, y, seqlen = zip(*self.records)
+        #return list(x), list(y)
 
     def vocab_size(self):
         return len(tokenizer.vocab)
