@@ -57,16 +57,6 @@ class Metrics(keras.callbacks.Callback):
         return
 
 
-def encode_with_bert(bert_model, sequences, return_layers=-1):
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    bert_model.to(device)
-    with torch.no_grad():
-        sequences_tensor = torch.LongTensor(sequences).to(device)
-        encoded_layers, _ = bert_model(sequences_tensor)
-        encs = encoded_layers[return_layers]
-    return encs.detach().cpu().numpy()
-
-
 def get_model(n_classes, lr, top_rnns=True):
     #input_words = Input(shape=(maxlen,), dtype='int32', name='word_ids')
     input = Input(shape=bert_output_shape, dtype=bert_output_dtype, name='bert_encodings')
@@ -82,7 +72,6 @@ def get_model(n_classes, lr, top_rnns=True):
                   )
     plot_model(model, to_file='model.png', show_shapes=True)
     return model
-
 
 
 if __name__=="__main__":
@@ -118,8 +107,8 @@ if __name__=="__main__":
     y_train = to_categorical(train_dataset.y, num_classes=len(tagset))
     y_eval = to_categorical(eval_dataset.y, num_classes=len(tagset))
 
-    x_train_encoded = encode_with_bert(bert, train_dataset.x)
-    x_eval_encoded = encode_with_bert(bert, eval_dataset.x)
+    x_train_encoded = train_dataset.x_bertencoded()
+    x_eval_encoded = eval_dataset.x_bertencoded()
     assert x_train_encoded.shape[1:] == x_eval_encoded.shape[1:], 'shape mismatch for bert encoded sequences'
     bert_output_shape = x_train_encoded.shape[1:]
     bert_output_dtype = x_train_encoded.dtype
