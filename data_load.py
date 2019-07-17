@@ -44,9 +44,6 @@ class ConllDataset(data.Dataset):
         fpath: [train|valid|test].txt
         """
         self.bert_model = bert_model
-        #if self.bert_model is None:
-        #    print('load BERT model...')
-        #    self.bert_model = BertModel.from_pretrained('bert-base-cased').eval()
 
         self.cache_dir = cache_dir
         os.makedirs(self.cache_dir, exist_ok=True)
@@ -169,7 +166,10 @@ class ConllDataset(data.Dataset):
         self.is_heads = sequence.pad_sequences(self.is_heads, maxlen=maxlen, padding=padding)
 
     def encode_with_bert(self, sequences: np.ndarray, return_layers=-1, batch_size=32):
-        assert self.bert_model is not None, 'no BERT model loaded'
+        #assert self.bert_model is not None, 'no BERT model loaded'
+        if self.bert_model is None:
+            print('load BERT model...')
+            self.bert_model = BertModel.from_pretrained('bert-base-cased').eval()
         assert isinstance(sequences, np.ndarray), 'sequences has to be an ndarray. Did you call pad_to_numpy(maxlen)?'
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.bert_model.to(device)
