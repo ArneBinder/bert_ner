@@ -1,14 +1,10 @@
 import argparse
 
 import keras
-import torch
 from keras import Input, Model
 from keras.layers import LSTM, Dense, Bidirectional
 from keras.optimizers import Adam
 from keras.utils import plot_model, to_categorical
-from keras_preprocessing import sequence
-from pytorch_pretrained_bert import BertModel
-import keras.backend as K
 import numpy as np
 import sklearn.metrics as sklm
 
@@ -57,9 +53,8 @@ class Metrics(keras.callbacks.Callback):
         return
 
 
-def get_model(n_classes, lr, top_rnns=True):
-    #input_words = Input(shape=(maxlen,), dtype='int32', name='word_ids')
-    input = Input(shape=bert_output_shape, dtype=bert_output_dtype, name='bert_encodings')
+def get_model(n_classes, input_shape, input_dtype, lr, top_rnns=True):
+    input = Input(shape=input_shape, dtype=input_dtype, name='bert_encodings')
     X = input
     if top_rnns:
         X = Bidirectional(LSTM(768 // 2, dropout=0.2, recurrent_dropout=0.2, return_sequences=True))(X)
@@ -88,13 +83,11 @@ if __name__=="__main__":
     parser.add_argument("--use_default_tagset", dest="use_default_tagset", action="store_true")
     args = parser.parse_args()
 
-    print('Embed sequences with BERT...')
-    bert = BertModel.from_pretrained('bert-base-cased').eval()
     print('Loading data...')
     default_tagset = None
     if args.use_default_tagset:
         default_tagset = ('<PAD>', 'O', 'I-LOC', 'B-PER', 'I-PER', 'I-ORG', 'I-MISC', 'B-MISC', 'B-LOC', 'B-ORG')
-    eval_dataset = ConllDataset(args.validset, bert_model=bert, tagset=default_tagset)
+    eval_dataset = ConllDataset(args.validset, tagset=default_tagset)
     train_dataset = ConllDataset(args.trainset, bert_model=eval_dataset.bert_model, tagset=eval_dataset.tagset)
     tagset = eval_dataset.tagset
 
@@ -114,7 +107,8 @@ if __name__=="__main__":
     bert_output_dtype = x_train_encoded.dtype
 
     print('Build model...')
-    model = get_model(n_classes=len(tagset), lr=args.lr, top_rnns=args.top_rnns)
+    model = get_model(n_classes=len(tagset), input_shape=bert_output_shape, input_dtype=bert_output_dtype, lr=args.lr,
+                      top_rnns=args.top_rnns)
 
 
     print('Train with batch_size=%i...' % args.batch_size)
