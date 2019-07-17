@@ -33,6 +33,7 @@ from torch.utils import data
 from keras_preprocessing import sequence
 
 from pytorch_pretrained_bert import BertTokenizer, BertModel
+from tqdm import tqdm
 
 tokenizer = BertTokenizer.from_pretrained('bert-base-cased', do_lower_case=False)
 
@@ -49,18 +50,20 @@ class ConllDataset(data.Dataset):
             print('load BERT model...')
             self.bert_model = BertModel.from_pretrained('bert-base-cased').eval()
 
-        os.makedirs(cache_dir, exist_ok=True)
+        self.cache_dir = cache_dir
+        os.makedirs(self.cache_dir, exist_ok=True)
         print('process data from: %s...' % fpath)
-        cache_fn = os.path.join(cache_dir, f'dataset_{fpath.split("/")[-1]}.pkl')
-        if os.path.exists(cache_fn):
+        self.cache_base_fn = os.path.join(self.cache_dir, f'{fpath.split("/")[-1]}')
+        cache_dataset_fn = self.cache_base_fn + '_dataset.json'
+        if os.path.exists(cache_dataset_fn):
             print('cached dataset found. load {cache_fn}...'  )
-            loaded = pickle.load(open(cache_fn, 'rb'))
+            #loaded = pickle.load(open(cache_dataset_fn, 'rb'))
+            loaded = json.load(open(cache_dataset_fn))
             for k, v in loaded.items():
                 self.__setattr__(k, v)
             print(f'loaded data for keys: {", ".join(loaded.keys())}')
             self.tag2idx = {tag: idx for idx, tag in enumerate(self.tagset)}
             self.idx2tag = {idx: tag for idx, tag in enumerate(self.tagset)}
-
         else:
             entries = open(fpath, 'r').read().strip().split("\n\n")
             self.maxlen = -1
@@ -96,9 +99,16 @@ class ConllDataset(data.Dataset):
                 yy = [self.tag2idx[t] for t in tags]
                 self.y.append(yy)
 
-            print(f'dump dataset to {cache_fn}...')
-            pickle.dump({'words_str': self.words_str, 'x': self.x, 'is_heads': self.is_heads, 'tags_str': self.tags_str, 'y': self.y, 'tagset': self.tagset, 'maxlen': self.maxlen},
-                        open(cache_fn, 'wb'))
+            print(f'dump dataset to {cache_dataset_fn}...')
+            all_data = {'words_str': self.words_str,
+                        'x': self.x,
+                        'is_heads': self.is_heads,
+                        'tags_str': self.tags_str,
+                        'y': self.y,
+                        'tagset': self.tagset,
+                        'maxlen': self.maxlen}
+            json.dump(all_data, open(cache_dataset_fn, 'w'))
+            #pickle.dump(all_data, open(cache_dataset_fn, 'wb'))
 
     def convert_to_record(self, words, tags):
         # We give credits only to the first piece.
@@ -137,12 +147,13 @@ class ConllDataset(data.Dataset):
         self.is_heads = sequence.pad_sequences(self.is_heads, maxlen=maxlen, padding=padding)
 
     def encode_with_bert(self, sequences: np.ndarray, return_layers=-1, batch_size=32):
+        assert self.bert_model is not None, 'no BERT model loaded'
         assert isinstance(sequences, np.ndarray), 'sequences has to be an ndarray. Did you call pad_to_numpy(maxlen)?'
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.bert_model.to(device)
         encs_list = []
         with torch.no_grad():
-            for i in range(0, len(sequences), batch_size):
+            for i in tqdm(range(0, len(sequences), batch_size)):
                 sequences_tensor = torch.LongTensor(sequences[i:(i + batch_size)]).to(device)
                 encoded_layers, _ = self.bert_model(sequences_tensor)
                 encs = encoded_layers[return_layers]
@@ -150,28 +161,18 @@ class ConllDataset(data.Dataset):
         return np.concatenate(encs_list, axis=0)
 
     def x_bertencoded(self):
-        return self.encode_with_bert(self.x)
+        cache_fn = self.cache_base_fn + '_xencoded.npy'
+        if os.path.exists(cache_fn):
+            print(f'load encoded x from file: {cache_fn}')
+            res = np.load(cache_fn)
+        else:
+            res = self.encode_with_bert(self.x)
+            print(f'save encoded x to file: {cache_fn}')
+            np.save(cache_fn, res)
+        return res
 
     def vocab_size(self):
         return len(tokenizer.vocab)
 
-
-def pad(batch, maxlen=None):
-    '''Pads to the longest sample'''
-    f = lambda x: [sample[x] for sample in batch]
-    words = f(0)
-    is_heads = f(2)
-    tags = f(3)
-    seqlens = f(-1)
-
-    if maxlen is None:
-        maxlen = np.array(seqlens).max()
-
-    f = lambda x, seqlen: [sample[x] + [0] * (seqlen - len(sample[x])) for sample in batch] # 0: <pad>
-    x = f(1, maxlen)
-    y = f(-2, maxlen)
-
-
-    return words, torch.LongTensor(x), is_heads, tags, torch.LongTensor(y), seqlens
 
 
