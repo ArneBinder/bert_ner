@@ -22,6 +22,8 @@ tags: list of tags.['O O B-MISC ...', '...']
 y: encoded tags. [N, T]. int64
 seqlens: list of seqlens. [45, 49, 10, 50, ...]
 '''
+import pickle
+
 import numpy as np
 import torch
 from torch.utils import data
@@ -94,6 +96,9 @@ class NerDataset(data.Dataset):
             #tags_li.append(sent_tags)
         #self.sents, self.tags_li = sents, tags_li
         #self.records = records
+
+
+        pickle.dump([self.words, self.x, self.is_heads, self.tags, self.y, self.seqlen], open(f'dataset_{fpath.split("/")[-1]}.pkl', 'wb'))
 
 
     def __len__(self):
