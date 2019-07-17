@@ -123,7 +123,7 @@ class ConllDataset(data.Dataset):
             else:
                 res = func(*args, **kwargs)
                 print(f'save to cache {full_fn}...')
-                np.save(res, full_fn)
+                np.save(full_fn, res)
         else:
             raise NotImplementedError(f'Unknown cache file extension: {fn}. Use either json, pkl or npy.')
         return res
