@@ -5,9 +5,10 @@ import keras
 from keras import Input, Model
 from keras.layers import LSTM, Dense, Bidirectional
 from keras.optimizers import Adam
-from keras.utils import plot_model, to_categorical, multi_gpu_model
+from keras.utils import plot_model, multi_gpu_model
 import numpy as np
 import sklearn.metrics as sklm
+from keras_preprocessing import sequence
 from tensorflow.python.client import device_lib
 import tensorflow as tf
 
@@ -96,6 +97,7 @@ if __name__=="__main__":
     parser.add_argument("--trainset", type=str, default="conll2003/train.txt")
     parser.add_argument("--validset", type=str, default="conll2003/valid.txt")
     parser.add_argument("--use_default_tagset", dest="use_default_tagset", action="store_true")
+    parser.add_argument("--predict_tag", dest="predict_tag", type=str, default='ner')
     args = parser.parse_args()
 
     # disables many logging spam
@@ -103,20 +105,18 @@ if __name__=="__main__":
     # set root logging level
     logging.getLogger().setLevel(logging.DEBUG)
 
+    # mapping from tag type to position [column] index in the dataset
+    tag_types = {'ner': 3, 'pos': 1}
+    assert args.predict_tag in tag_types, \
+        f'the tag type to predict [{args.predict_tag}] is not in tag_types that are taken from the datasets: ' \
+        f'{", ".join(tag_types.keys())}'
     logger.info('Loading data...')
-    default_tagset = None
-    if args.use_default_tagset:
-        default_tagset = ('<PAD>', 'O', 'I-LOC', 'B-PER', 'I-PER', 'I-ORG', 'I-MISC', 'B-MISC', 'B-LOC', 'B-ORG')
-    eval_dataset = ConllDataset(args.validset, tagset=default_tagset)
-    train_dataset = ConllDataset(args.trainset, tagset=eval_dataset.tagset)
-    tagset = eval_dataset.tagset
-
+    eval_dataset = ConllDataset(args.validset, tag_types=tag_types)
+    train_dataset = ConllDataset(args.trainset, tag_types=tag_types)
     maxlen = max(train_dataset.maxlen, eval_dataset.maxlen)
-    train_dataset.pad_to_numpy(maxlen=maxlen)
-    eval_dataset.pad_to_numpy(maxlen=maxlen)
-    y_train = to_categorical(train_dataset.y, num_classes=len(tagset))
-    y_eval = to_categorical(eval_dataset.y, num_classes=len(tagset))
-
+    train_dataset.seqlen = maxlen
+    eval_dataset.seqlen = maxlen
+    #tagset = eval_dataset.tagset
     logger.info('encode tokens with BERT...')
     x_train_encoded = train_dataset.x_bertencoded()
     x_eval_encoded = eval_dataset.x_bertencoded()
@@ -124,16 +124,21 @@ if __name__=="__main__":
     bert_output_shape = x_train_encoded.shape[1:]
     bert_output_dtype = x_train_encoded.dtype
 
+    default_tagsets = {'ner': ('O', 'I-LOC', 'B-PER', 'I-PER', 'I-ORG', 'I-MISC', 'B-MISC', 'B-LOC', 'B-ORG'),
+                       }
+    tagset = eval_dataset.generate_y_and_tagset(tag_type=args.predict_tag, tagset=('<PAD>',) + default_tagsets[args.predict_tag] if args.use_default_tagset else None)
+    _ = train_dataset.generate_y_and_tagset(tag_type=args.predict_tag, tagset=tagset)
+
     logger.info('Build model...')
     model, get_model = get_model(n_classes=len(tagset), input_shape=bert_output_shape, input_dtype=bert_output_dtype,
                                  lr=args.lr, top_rnns=args.top_rnns)
 
     logger.info('Train with batch_size=%i...' % args.batch_size)
-    metrics = Metrics(val_is_heads=eval_dataset.is_heads)
-    model.fit(x_train_encoded, y_train,
+    metrics = Metrics(val_is_heads=sequence.pad_sequences(eval_dataset.is_heads, maxlen=maxlen))
+    model.fit(x_train_encoded, train_dataset.y,
               batch_size=args.batch_size,
               epochs=args.n_epochs,
-              validation_data=(x_eval_encoded, y_eval),
+              validation_data=(x_eval_encoded, eval_dataset.y),
               callbacks=[metrics],
               #verbose=0
               )
