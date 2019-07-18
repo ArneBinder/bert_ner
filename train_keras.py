@@ -68,7 +68,7 @@ def get_model(n_classes, input_shape, input_dtype, lr, top_rnns=True):
     devices = device_lib.list_local_devices()
     gpus = len([None for d in devices if d.device_type == 'GPU'])
     if gpus > 1:
-        model = multi_gpu_model(model_save, cpu_relocation=True)
+        model = multi_gpu_model(model_save, gpus=gpus, cpu_relocation=True)
         logging.info("Training using multiple GPUs..")
     else:
         model = model_save
