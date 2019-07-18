@@ -11,22 +11,8 @@ import sklearn.metrics as sklm
 from tensorflow.python.client import device_lib
 import tensorflow as tf
 
-
-LOGGING_FORMAT='%(asctime)s %(levelname)s %(message)s'
-#logging.basicConfig(level=logging.DEBUG)
-
-logger = logging.getLogger(__name__)
-ch = logging.StreamHandler()
-ch.setLevel(logging.DEBUG)
-# create formatter and add it to the handlers
-ch.setFormatter(logging.Formatter(LOGGING_FORMAT))
-# add the handlers to logger
-logger.addHandler(ch)
-logger.propagate = False
-# for tensorflow logging, see: https://stackoverflow.com/questions/44853059/tensorflow-logging-messages-do-not-appear
-
-from data_load import ConllDataset
-
+from data_load import ConllDataset, get_logger
+logger = get_logger(__name__)
 
 # taken from https://datascience.stackexchange.com/questions/13746/how-to-define-a-custom-performance-metric-in-keras
 class Metrics(keras.callbacks.Callback):
@@ -114,9 +100,6 @@ if __name__=="__main__":
     tagset = eval_dataset.tagset
 
     maxlen = max(train_dataset.maxlen, eval_dataset.maxlen)
-    assert train_dataset.vocab_size() == eval_dataset.vocab_size(), 'train_dataset.vocab_size [%i] != eval_dataset.vocab_size [%i]' % (train_dataset.vocab_size(), eval_dataset.vocab_size())
-    vocab_size = train_dataset.vocab_size()
-    logger.info('tokenizer vocab size: %i' % vocab_size)
     train_dataset.pad_to_numpy(maxlen=maxlen)
     eval_dataset.pad_to_numpy(maxlen=maxlen)
     y_train = to_categorical(train_dataset.y, num_classes=len(tagset))

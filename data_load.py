@@ -36,10 +36,10 @@ from keras_preprocessing import sequence
 from pytorch_pretrained_bert import BertTokenizer, BertModel
 from tqdm import tqdm
 
-def get_logger():
+def get_logger(name):
     # logging.basicConfig(level=logging.DEBUG)
     LOGGING_FORMAT = '%(asctime)s %(levelname)s %(message)s'
-    logger = logging.getLogger(__name__)
+    logger = logging.getLogger(name)
     ch = logging.StreamHandler()
     ch.setLevel(logging.DEBUG)
     # create formatter and add it to the handlers
@@ -48,9 +48,10 @@ def get_logger():
     # add the handlers to logger
     logger.addHandler(ch)
     logger.propagate = False
+    # for tensorflow logging, see: https://stackoverflow.com/questions/44853059/tensorflow-logging-messages-do-not-appear
     return logger
 
-logger = get_logger()
+logger = get_logger(__name__)
 
 class ConllDataset(data.Dataset):
     bert_model = None
