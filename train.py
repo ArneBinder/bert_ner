@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils import data
 from model import Net
-from data_load import NerDataset, pad, VOCAB, tokenizer, tag2idx, idx2tag
+#from data_load import NerDataset, pad, VOCAB, tokenizer, tag2idx, idx2tag
 import os
 import numpy as np
 import argparse
