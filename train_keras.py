@@ -5,7 +5,7 @@ import keras
 from keras import Input, Model
 from keras.layers import LSTM, Dense, Bidirectional
 from keras.optimizers import Adam
-from keras.utils import plot_model, to_categorical
+from keras.utils import plot_model, to_categorical, multi_gpu_model
 import numpy as np
 import sklearn.metrics as sklm
 from tensorflow.python.client import device_lib
@@ -63,13 +63,22 @@ def get_model(n_classes, input_shape, input_dtype, lr, top_rnns=True):
         X = Bidirectional(LSTM(768 // 2, dropout=0.2, recurrent_dropout=0.2, return_sequences=True))(X)
         X = Bidirectional(LSTM(768 // 2, dropout=0.2, recurrent_dropout=0.2, return_sequences=True))(X)
     pred = Dense(n_classes, activation='softmax')(X)
-    model = Model(input, pred)
+    model_save = Model(input, pred)
+    logger.debug(f'available training devices:\n{device_lib.list_local_devices()}'.replace('\n', '\n\t'))
+    try:
+        model = multi_gpu_model(model_save)
+        logging.info("Training using multiple GPUs..")
+    except ValueError:
+        model = model_save
+        logging.info("Training using single GPU or CPU..")
+
     optimizer = Adam(lr=lr)
     model.compile(loss='categorical_crossentropy',
                   optimizer=optimizer
                   )
     plot_model(model, to_file='model.png', show_shapes=True)
-    return model
+    # use model_save to save weights
+    return model, model_save
 
 
 if __name__=="__main__":
@@ -113,9 +122,8 @@ if __name__=="__main__":
     bert_output_dtype = x_train_encoded.dtype
 
     logger.info('Build model...')
-    logger.debug(f'available training devices:\n{device_lib.list_local_devices()}'.replace('\n', '\n\t'))
-    model = get_model(n_classes=len(tagset), input_shape=bert_output_shape, input_dtype=bert_output_dtype, lr=args.lr,
-                      top_rnns=args.top_rnns)
+    model, get_model = get_model(n_classes=len(tagset), input_shape=bert_output_shape, input_dtype=bert_output_dtype,
+                                 lr=args.lr, top_rnns=args.top_rnns)
 
     logger.info('Train with batch_size=%i...' % args.batch_size)
     metrics = Metrics(val_is_heads=eval_dataset.is_heads)
