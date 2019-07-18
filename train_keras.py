@@ -56,13 +56,15 @@ class Metrics(keras.callbacks.Callback):
         print('val_f1: %f — val_precision: %f — val_recall %f' % (self.f1s[-1], self.precision[-1], self.recall[-1]))
         return
 
+def get_bi_lstm(n_hidden=768, dropout=0.0, recurrent_dropout=0.0):
+    return Bidirectional(LSTM(n_hidden // 2, dropout=dropout, recurrent_dropout=recurrent_dropout, return_sequences=True))
 
 def get_model(n_classes, input_shape, input_dtype, lr, top_rnns=True):
     input = Input(shape=input_shape, dtype=input_dtype, name='bert_encodings')
     X = input
     if top_rnns:
-        X = Bidirectional(LSTM(768 // 2, dropout=0.2, recurrent_dropout=0.2, return_sequences=True))(X)
-        X = Bidirectional(LSTM(768 // 2, dropout=0.2, recurrent_dropout=0.2, return_sequences=True))(X)
+        X = get_bi_lstm()(X)
+        X = get_bi_lstm()(X)
     pred = Dense(n_classes, activation='softmax')(X)
     model_save = Model(input, pred)
     #logger.debug(f'available training devices:\n{device_lib.list_local_devices()}'.replace('\n', '\n\t'))
