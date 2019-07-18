@@ -60,7 +60,7 @@ def get_bi_lstm(n_hidden=768, dropout=0.0, recurrent_dropout=0.0):
     return Bidirectional(LSTM(n_hidden // 2, dropout=dropout, recurrent_dropout=recurrent_dropout, return_sequences=True))
 
 def get_model(n_classes, input_shape, input_dtype, lr, top_rnns=True):
-    input = Input(shape=input_shape, dtype=input_dtype, name='bert_encodings')
+    input = Input(shape=(None, input_shape[-1]), dtype=input_dtype, name='bert_encodings')
     X = input
     if top_rnns:
         X = get_bi_lstm()(X)
@@ -128,8 +128,11 @@ if __name__=="__main__":
 
     default_tagsets = {'ner': ('O', 'I-LOC', 'B-PER', 'I-PER', 'I-ORG', 'I-MISC', 'B-MISC', 'B-LOC', 'B-ORG'),
                        }
-    tagset = eval_dataset.generate_y_and_tagset(tag_type=args.predict_tag, tagset=('<PAD>',) + default_tagsets[args.predict_tag] if args.use_default_tagset else None)
-    _ = train_dataset.generate_y_and_tagset(tag_type=args.predict_tag, tagset=tagset)
+    tagset = eval_dataset.generate_y_and_tagset(tag_type=args.predict_tag,
+                                                tagset=('<PAD>',) + default_tagsets[args.predict_tag] if args.use_default_tagset else None,
+                                                to_categorical=True)
+    _ = train_dataset.generate_y_and_tagset(tag_type=args.predict_tag, tagset=tagset,
+                                            to_categorical=True)
 
     logger.info('Build model...')
     model, get_model = get_model(n_classes=len(tagset), input_shape=bert_output_shape, input_dtype=bert_output_dtype,

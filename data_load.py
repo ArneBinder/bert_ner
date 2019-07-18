@@ -178,7 +178,7 @@ class ConllDataset(data.Dataset):
         return len(self.x)
 
 
-    def generate_y_and_tagset(self, tag_type='ner', tagset=None, pad_to_numpy=True, to_categorical=True):
+    def generate_y_and_tagset(self, tag_type='ner', tagset=None, pad_to_numpy=True, to_categorical=False):
         # create vocab from all tags (move padding tag to idx=0)
         if tagset is None:
             tagset = ['<PAD>'] + list(set(chain(*self.t[tag_type])) - {'<PAD>'})
