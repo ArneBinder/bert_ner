@@ -1,4 +1,4 @@
-#import tfpyth
+import tfpyth
 import torch
 import torch.nn as nn
 from keras import Input
@@ -6,7 +6,7 @@ from keras.layers import Bidirectional, LSTM, Dense
 from pytorch_pretrained_bert import BertModel
 import tensorflow as tf
 
-#session = tf.Session()
+session = tf.Session()
 
 class Net(nn.Module):
     def __init__(self, top_rnns=False, vocab_size=None, device='cpu', finetuning=False, explainable=False):
