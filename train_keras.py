@@ -66,7 +66,7 @@ def get_model(n_classes, input_shape, input_dtype, lr, top_rnns=True):
     model_save = Model(input, pred)
     logger.debug(f'available training devices:\n{device_lib.list_local_devices()}'.replace('\n', '\n\t'))
     try:
-        model = multi_gpu_model(model_save)
+        model = multi_gpu_model(model_save, cpu_relocation=True)
         logging.info("Training using multiple GPUs..")
     except ValueError:
         model = model_save
