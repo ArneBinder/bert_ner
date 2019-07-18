@@ -134,6 +134,7 @@ if __name__=="__main__":
     _ = train_dataset.generate_y_and_tagset(tag_type=args.predict_tag, tagset=tagset,
                                             to_categorical=True)
 
+    # TODO: put original pytorch model on top to recreate original performance
     logger.info('Build model...')
     model, get_model = get_model(n_classes=len(tagset), input_shape=bert_output_shape, input_dtype=bert_output_dtype,
                                  lr=args.lr, top_rnns=args.top_rnns)
