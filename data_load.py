@@ -26,6 +26,7 @@ import json
 import os
 import pickle
 from itertools import chain
+import logging
 
 import numpy as np
 import torch
@@ -35,19 +36,34 @@ from keras_preprocessing import sequence
 from pytorch_pretrained_bert import BertTokenizer, BertModel
 from tqdm import tqdm
 
-tokenizer = BertTokenizer.from_pretrained('bert-base-cased', do_lower_case=False)
+def get_logger():
+    # logging.basicConfig(level=logging.DEBUG)
+    LOGGING_FORMAT = '%(asctime)s %(levelname)s %(message)s'
+    logger = logging.getLogger(__name__)
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.DEBUG)
+    # create formatter and add it to the handlers
+    formatter = logging.Formatter(LOGGING_FORMAT)
+    ch.setFormatter(formatter)
+    # add the handlers to logger
+    logger.addHandler(ch)
+    logger.propagate = False
+    return logger
 
+logger = get_logger()
 
 class ConllDataset(data.Dataset):
-    def __init__(self, fpath, bert_model=None, tagset=None, cache_dir='cache'):
+    bert_model = None
+    tokenizer = None
+
+    def __init__(self, fpath, tagset=None, cache_dir='cache'):
         """
         fpath: [train|valid|test].txt
         """
-        self.bert_model = bert_model
 
         self.cache_dir = cache_dir
         os.makedirs(self.cache_dir, exist_ok=True)
-        print('process data from: %s...' % fpath)
+        logger.info('process data from: %s...' % fpath)
         self.cache_base_fn = os.path.join(self.cache_dir, f'{fpath.split("/")[-1]}_')
 
         all_data = self.calc_cached(func=self.load_dataset, fn='dataset.json', fpath=fpath, tagset=tagset)
@@ -55,6 +71,10 @@ class ConllDataset(data.Dataset):
             self.__setattr__(k, v)
 
     def load_dataset(self, fpath, tagset):
+        if ConllDataset.tokenizer is None:
+            logger.info('load BERT tokenizer...')
+            ConllDataset.tokenizer = BertTokenizer.from_pretrained('bert-base-cased', do_lower_case=False)
+
         entries = open(fpath, 'r').read().strip().split("\n\n")
         maxlen = -1
         words_str = []
@@ -74,14 +94,14 @@ class ConllDataset(data.Dataset):
             tags_str.append(c_tags)
             t.append(c_t)
             maxlen = max(len(c_x), maxlen)
-        print('loaded %i entries. maxlen: %i' % (len(x), maxlen))
+        logger.info('loaded %i entries. maxlen: %i' % (len(x), maxlen))
 
         # create vocab from all tags (move padding tag to idx=0)
         if tagset is None:
             tagset = ['<PAD>'] + list(set(chain(*t)) - {'<PAD>'})
         tag2idx = {tag: idx for idx, tag in enumerate(tagset)}
         #idx2tag = {idx: tag for idx, tag in enumerate(tagset)}
-        print('convert tags to indices...')
+        logger.info('convert tags to indices...')
         y = []
         for i, tags in enumerate(t):
             assert len(x[i]) == len(
@@ -102,27 +122,27 @@ class ConllDataset(data.Dataset):
         full_fn = self.cache_base_fn + fn
         if fn.endswith('.json'):
             if os.path.exists(full_fn):
-                print(f'load from cache {full_fn}...')
+                logger.info(f'load from cache {full_fn}...')
                 res = json.load(open(full_fn))
             else:
                 res = func(*args, **kwargs)
-                print(f'save to cache {full_fn}...')
+                logger.info(f'save to cache {full_fn}...')
                 json.dump(res, open(full_fn, 'w'))
         elif fn.endswith('.pkl'):
             if os.path.exists(full_fn):
-                print(f'load from cache {full_fn}...')
+                logger.info(f'load from cache {full_fn}...')
                 res = pickle.load(open(full_fn))
             else:
                 res = func(*args, **kwargs)
-                print(f'save to cache {full_fn}...')
+                logger.info(f'save to cache {full_fn}...')
                 pickle.dump(res, open(full_fn, 'wb'))
         elif fn.endswith('.npy'):
             if os.path.exists(full_fn):
-                print(f'load from cache {full_fn}...')
+                logger.info(f'load from cache {full_fn}...')
                 res = np.load(full_fn)
             else:
                 res = func(*args, **kwargs)
-                print(f'save to cache {full_fn}...')
+                logger.info(f'save to cache {full_fn}...')
                 np.save(full_fn, res)
         else:
             raise NotImplementedError(f'Unknown cache file extension: {fn}. Use either json, pkl or npy.')
@@ -134,8 +154,8 @@ class ConllDataset(data.Dataset):
         x, t = [], []  # list of ids
         is_heads = []  # list. 1: the token is the first piece of a word
         for word, tag in zip(words, tags):
-            tokens = tokenizer.tokenize(word) if word not in ("[CLS]", "[SEP]") else [word]
-            xx = tokenizer.convert_tokens_to_ids(tokens)
+            tokens = ConllDataset.tokenizer.tokenize(word) if word not in ("[CLS]", "[SEP]") else [word]
+            xx = ConllDataset.tokenizer.convert_tokens_to_ids(tokens)
 
             is_head = [1] + [0] * (len(tokens) - 1)
 
@@ -160,24 +180,24 @@ class ConllDataset(data.Dataset):
         return self.words_str[idx], self.x[idx], self.is_heads[idx], self.tags_str[idx], self.y[idx], self.seqlen[idx]
 
     def pad_to_numpy(self, maxlen: int, padding='post'):
-        print('pad x, y and is_heads...')
+        logger.info('pad x, y and is_heads...')
         self.x = sequence.pad_sequences(self.x, maxlen=maxlen, padding=padding)
         self.y = sequence.pad_sequences(self.y, maxlen=maxlen, padding=padding)
         self.is_heads = sequence.pad_sequences(self.is_heads, maxlen=maxlen, padding=padding)
 
     def encode_with_bert(self, sequences: np.ndarray, return_layers=-1, batch_size=32):
         #assert self.bert_model is not None, 'no BERT model loaded'
-        if self.bert_model is None:
-            print('load BERT model...')
-            self.bert_model = BertModel.from_pretrained('bert-base-cased').eval()
+        if ConllDataset.bert_model is None:
+            logger.info('load BERT model...')
+            ConllDataset.bert_model = BertModel.from_pretrained('bert-base-cased').eval()
         assert isinstance(sequences, np.ndarray), 'sequences has to be an ndarray. Did you call pad_to_numpy(maxlen)?'
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.bert_model.to(device)
+        ConllDataset.bert_model.to(device)
         encs_list = []
         with torch.no_grad():
             for i in tqdm(range(0, len(sequences), batch_size)):
                 sequences_tensor = torch.LongTensor(sequences[i:(i + batch_size)]).to(device)
-                encoded_layers, _ = self.bert_model(sequences_tensor)
+                encoded_layers, _ = ConllDataset.bert_model(sequences_tensor)
                 encs = encoded_layers[return_layers]
                 encs_list.append(encs.detach().cpu().numpy())
         return np.concatenate(encs_list, axis=0)
@@ -186,7 +206,7 @@ class ConllDataset(data.Dataset):
         return self.calc_cached(func=self.encode_with_bert, fn='xencoded.npy', sequences=self.x)
 
     def vocab_size(self):
-        return len(tokenizer.vocab)
+        return len(ConllDataset.tokenizer.vocab)
 
 
 

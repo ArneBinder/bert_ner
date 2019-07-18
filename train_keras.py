@@ -1,4 +1,5 @@
 import argparse
+import logging
 
 import keras
 from keras import Input, Model
@@ -7,6 +8,22 @@ from keras.optimizers import Adam
 from keras.utils import plot_model, to_categorical
 import numpy as np
 import sklearn.metrics as sklm
+from tensorflow.python.client import device_lib
+import tensorflow as tf
+
+
+LOGGING_FORMAT='%(asctime)s %(levelname)s %(message)s'
+#logging.basicConfig(level=logging.DEBUG)
+
+logger = logging.getLogger(__name__)
+ch = logging.StreamHandler()
+ch.setLevel(logging.DEBUG)
+# create formatter and add it to the handlers
+ch.setFormatter(logging.Formatter(LOGGING_FORMAT))
+# add the handlers to logger
+logger.addHandler(ch)
+logger.propagate = False
+# for tensorflow logging, see: https://stackoverflow.com/questions/44853059/tensorflow-logging-messages-do-not-appear
 
 from data_load import ConllDataset
 
@@ -83,42 +100,48 @@ if __name__=="__main__":
     parser.add_argument("--use_default_tagset", dest="use_default_tagset", action="store_true")
     args = parser.parse_args()
 
-    print('Loading data...')
+    # disables many logging spam
+    tf.logging.set_verbosity(tf.logging.ERROR)
+    # set root logging level
+    logging.getLogger().setLevel(logging.DEBUG)
+
+    logger.info('Loading data...')
     default_tagset = None
     if args.use_default_tagset:
         default_tagset = ('<PAD>', 'O', 'I-LOC', 'B-PER', 'I-PER', 'I-ORG', 'I-MISC', 'B-MISC', 'B-LOC', 'B-ORG')
     eval_dataset = ConllDataset(args.validset, tagset=default_tagset)
-    train_dataset = ConllDataset(args.trainset, bert_model=eval_dataset.bert_model, tagset=eval_dataset.tagset)
+    train_dataset = ConllDataset(args.trainset, tagset=eval_dataset.tagset)
     tagset = eval_dataset.tagset
 
     maxlen = max(train_dataset.maxlen, eval_dataset.maxlen)
     assert train_dataset.vocab_size() == eval_dataset.vocab_size(), 'train_dataset.vocab_size [%i] != eval_dataset.vocab_size [%i]' % (train_dataset.vocab_size(), eval_dataset.vocab_size())
     vocab_size = train_dataset.vocab_size()
-    print('tokenizer vocab size: %i' % vocab_size)
+    logger.info('tokenizer vocab size: %i' % vocab_size)
     train_dataset.pad_to_numpy(maxlen=maxlen)
     eval_dataset.pad_to_numpy(maxlen=maxlen)
     y_train = to_categorical(train_dataset.y, num_classes=len(tagset))
     y_eval = to_categorical(eval_dataset.y, num_classes=len(tagset))
 
-    print('encode tokens with BERT...')
+    logger.info('encode tokens with BERT...')
     x_train_encoded = train_dataset.x_bertencoded()
     x_eval_encoded = eval_dataset.x_bertencoded()
     assert x_train_encoded.shape[1:] == x_eval_encoded.shape[1:], 'shape mismatch for bert encoded sequences'
     bert_output_shape = x_train_encoded.shape[1:]
     bert_output_dtype = x_train_encoded.dtype
 
-    print('Build model...')
+    logger.info('Build model...')
+    logger.debug(f'available training devices:\n{device_lib.list_local_devices()}'.replace('\n', '\n\t'))
     model = get_model(n_classes=len(tagset), input_shape=bert_output_shape, input_dtype=bert_output_dtype, lr=args.lr,
                       top_rnns=args.top_rnns)
 
-
-    print('Train with batch_size=%i...' % args.batch_size)
+    logger.info('Train with batch_size=%i...' % args.batch_size)
     metrics = Metrics(val_is_heads=eval_dataset.is_heads)
     model.fit(x_train_encoded, y_train,
               batch_size=args.batch_size,
               epochs=args.n_epochs,
               validation_data=(x_eval_encoded, y_eval),
-              callbacks=[metrics]
+              callbacks=[metrics],
+              #verbose=0
               )
     #score, acc, f1 = model.evaluate(x_eval_encoded, y_eval,
     #                           batch_size=args.batch_size)
@@ -127,6 +150,4 @@ if __name__=="__main__":
     #print('Test f1:', f1)
     #eval_pred = model.predict(x_eval_encoded)
 
-
-
-    print('done')
+    #logger.info('done')
