@@ -64,11 +64,13 @@ def get_model(n_classes, input_shape, input_dtype, lr, top_rnns=True):
         X = Bidirectional(LSTM(768 // 2, dropout=0.2, recurrent_dropout=0.2, return_sequences=True))(X)
     pred = Dense(n_classes, activation='softmax')(X)
     model_save = Model(input, pred)
-    logger.debug(f'available training devices:\n{device_lib.list_local_devices()}'.replace('\n', '\n\t'))
-    try:
+    #logger.debug(f'available training devices:\n{device_lib.list_local_devices()}'.replace('\n', '\n\t'))
+    devices = device_lib.list_local_devices()
+    gpus = len([None for d in devices if d.device_type == 'GPU'])
+    if gpus > 1:
         model = multi_gpu_model(model_save, cpu_relocation=True)
         logging.info("Training using multiple GPUs..")
-    except ValueError:
+    else:
         model = model_save
         logging.info("Training using single GPU or CPU..")
 
