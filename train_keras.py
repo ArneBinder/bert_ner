@@ -66,13 +66,14 @@ def get_model(n_classes, input_shape, input_dtype, lr, top_rnns=True):
     model_save = Model(input, pred)
     #logger.debug(f'available training devices:\n{device_lib.list_local_devices()}'.replace('\n', '\n\t'))
     devices = device_lib.list_local_devices()
+    # take gpu count from device info manually, because virtual devices (e.g. XLA_GPU) cause wrong number
     gpus = len([None for d in devices if d.device_type == 'GPU'])
     if gpus > 1:
         model = multi_gpu_model(model_save, gpus=gpus, cpu_relocation=True)
-        logging.info("Training using multiple GPUs..")
+        logging.info(f"Training using {gpus} GPUs...")
     else:
         model = model_save
-        logging.info("Training using single GPU or CPU..")
+        logging.info("Training using single GPU or CPU...")
 
     optimizer = Adam(lr=lr)
     model.compile(loss='categorical_crossentropy',
