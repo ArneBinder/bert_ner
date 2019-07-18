@@ -179,7 +179,7 @@ class ConllDataset(data.Dataset):
                 sequences_tensor = torch.LongTensor(sequences[i:(i + batch_size)]).to(device)
                 encoded_layers, _ = self.bert_model(sequences_tensor)
                 encs = encoded_layers[return_layers]
-                encs_list.append(encs)
+                encs_list.append(encs.detach().cpu().numpy())
         return np.concatenate(encs_list, axis=0)
 
     def x_bertencoded(self):
