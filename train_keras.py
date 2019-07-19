@@ -3,7 +3,7 @@ import logging
 
 import keras
 from keras import Input, Model
-from keras.layers import LSTM, Dense, Bidirectional
+from keras.layers import LSTM, Dense, Bidirectional, K
 from keras.optimizers import Adam
 from keras.utils import plot_model, multi_gpu_model
 import numpy as np
@@ -15,45 +15,89 @@ import tensorflow as tf
 from data_load import ConllDataset, get_logger
 logger = get_logger(__name__)
 
+def calc_metrics(model, data, is_heads_mask):
+    score = np.asarray(model.predict(data[0]))
+    predict = np.round(score)
+    targ = data[1]
+
+    # flatten and mask for heads
+    score = score.reshape((-1, score.shape[-1]))[is_heads_mask]
+    predict = predict.reshape((-1, predict.shape[-1]))[is_heads_mask]
+    targ = targ.reshape((-1, targ.shape[-1]))[is_heads_mask]
+
+    precision = sklm.precision_score(targ, predict, average='macro')
+    recall = sklm.recall_score(targ, predict, average='macro')
+    if precision != 0.0 and recall != 0.0:
+        f1 = 2 * precision * recall / (precision + recall)
+    else:
+        f1 = 0.0
+    return {'f1': f1, 'precision': precision, 'recall': recall}
+
+# taken from https://datascience.stackexchange.com/questions/13746/how-to-define-a-custom-performance-metric-in-keras
+def f1_score(y_true, y_pred):
+    """
+    f1 score
+
+    :param y_true:
+    :param y_pred:
+    :return:
+    """
+    # TODO: discard zero-index predictions
+    y_true = K.expand_dims(K.flatten(y_true))
+    y_pred = K.expand_dims(K.flatten(y_pred))
+
+    tp_3d = K.concatenate(
+        [
+            K.cast(y_true, 'bool'),
+            K.cast(K.round(y_pred), 'bool'),
+            K.cast(K.ones_like(y_pred), 'bool')
+        ], axis=-1
+    )
+
+    fp_3d = K.concatenate(
+        [
+            K.cast(K.abs(y_true - K.ones_like(y_true)), 'bool'),
+            K.cast(K.round(y_pred), 'bool'),
+            K.cast(K.ones_like(y_pred), 'bool')
+        ], axis=-1
+    )
+
+    fn_3d = K.concatenate(
+        [
+            K.cast(y_true, 'bool'),
+            K.cast(K.abs(K.round(y_pred) - K.ones_like(y_pred)), 'bool'),
+            K.cast(K.ones_like(y_pred), 'bool')
+        ], axis=-1
+    )
+
+    tp = K.sum(K.cast(K.all(tp_3d, axis=-1), 'int32'))
+    fp = K.sum(K.cast(K.all(fp_3d, axis=-1), 'int32'))
+    fn = K.sum(K.cast(K.all(fn_3d, axis=-1), 'int32'))
+
+    precision = tp / (tp + fp)
+    recall = tp / (tp + fn)
+    return 2 * ((precision * recall) / (precision + recall))
+
+
 # taken from https://datascience.stackexchange.com/questions/13746/how-to-define-a-custom-performance-metric-in-keras
 class Metrics(keras.callbacks.Callback):
     def __init__(self, val_is_heads):
         super(Metrics, self).__init__()
         self.val_is_heads_mask = val_is_heads.reshape((-1,)).astype(bool)
 
-    def on_train_begin(self, logs={}):
-        self.confusion = []
-        self.precision = []
-        self.recall = []
-        self.f1s = []
-        self.kappa = []
-        self.auc = []
+    #def on_train_begin(self, logs={}):
+        #self.confusion = []
+        #self.precision = []
+        #self.recall = []
+        #self.f1s = []
+        #self.kappa = []
+        #self.auc = []
 
     def on_epoch_end(self, epoch, logs={}):
-        score = np.asarray(self.model.predict(self.validation_data[0]))
-        predict = np.round(np.asarray(self.model.predict(self.validation_data[0])))
-        targ = self.validation_data[1]
 
-        # flatten and mask for heads
-        score = score.reshape((-1, score.shape[-1]))[self.val_is_heads_mask]
-        predict = predict.reshape((-1, predict.shape[-1]))[self.val_is_heads_mask]
-        targ = targ.reshape((-1, targ.shape[-1]))[self.val_is_heads_mask]
+        metrics_eval = calc_metrics(self.model, data=self.validation_data, is_heads_mask=self.val_is_heads_mask)
+        print(' — '.join([f'val_{m}: {v:.2}' for m, v in metrics_eval.items()]))
 
-        #self.auc.append(sklm.roc_auc_score(targ, score))
-        #self.confusion.append(sklm.confusion_matrix(targ, predict))
-        #if sum(np.max(predict, axis=-1)) < len(predict):
-        #print('WARNING: Precision is ill-defined and being set to 0.0 in labels with no predicted samples.')
-        self.precision.append(sklm.precision_score(targ, predict, average='macro'))
-        #if sum(np.max(targ, axis=-1)) < len(targ):
-        #print('WARNING: Recall is ill-defined and being set to 0.0 in labels with no true samples.')
-        self.recall.append(sklm.recall_score(targ, predict, average='macro'))
-        if self.precision[-1] == 0.0 or self.recall[-1] == 0.0:
-            self.f1s.append(0.0)
-        else:
-            self.f1s.append(2 * self.precision[-1] * self.recall[-1] / (self.precision[-1] + self.recall[-1]))
-        #self.kappa.append(sklm.cohen_kappa_score(targ, predict))
-
-        print('val_f1: %f — val_precision: %f — val_recall %f' % (self.f1s[-1], self.precision[-1], self.recall[-1]))
         return
 
 def get_bi_lstm(n_hidden=768, dropout=0.0, recurrent_dropout=0.0):
@@ -80,11 +124,12 @@ def get_model(n_classes, input_shape, input_dtype, lr, top_rnns=True):
 
     optimizer = Adam(lr=lr)
     model.compile(loss='categorical_crossentropy',
-                  optimizer=optimizer
+                  optimizer=optimizer,
+                  metrics=[f1_score, 'acc']
                   )
     plot_model(model, to_file='model.png', show_shapes=True)
     # use model_save to save weights
-    return model, model_save
+    return model, model_save, ('f1_score', 'acc')
 
 
 if __name__=="__main__":
@@ -116,8 +161,8 @@ if __name__=="__main__":
     eval_dataset = ConllDataset(args.validset, tag_types=tag_types)
     train_dataset = ConllDataset(args.trainset, tag_types=tag_types)
     maxlen = max(train_dataset.maxlen, eval_dataset.maxlen)
-    train_dataset.seqlen = maxlen
-    eval_dataset.seqlen = maxlen
+    train_dataset.maxlen = maxlen
+    eval_dataset.maxlen = maxlen
     #tagset = eval_dataset.tagset
     logger.info('encode tokens with BERT...')
     x_train_encoded = train_dataset.x_bertencoded()
@@ -136,20 +181,22 @@ if __name__=="__main__":
 
     # TODO: put original pytorch model on top to recreate original performance
     logger.info('Build model...')
-    model, get_model = get_model(n_classes=len(tagset), input_shape=bert_output_shape, input_dtype=bert_output_dtype,
-                                 lr=args.lr, top_rnns=args.top_rnns)
+    model, save_model, metric_names = get_model(n_classes=len(tagset), input_shape=bert_output_shape, input_dtype=bert_output_dtype,
+                                                lr=args.lr, top_rnns=args.top_rnns)
 
     logger.info('Train with batch_size=%i...' % args.batch_size)
     metrics = Metrics(val_is_heads=sequence.pad_sequences(eval_dataset.is_heads, maxlen=maxlen))
-    model.fit(x_train_encoded, train_dataset.y,
-              batch_size=args.batch_size,
-              epochs=args.n_epochs,
-              validation_data=(x_eval_encoded, eval_dataset.y),
-              callbacks=[metrics],
-              #verbose=0
-              )
-    #score, acc, f1 = model.evaluate(x_eval_encoded, y_eval,
-    #                           batch_size=args.batch_size)
+    train_history = model.fit(x=x_train_encoded, y=train_dataset.y,
+                      batch_size=args.batch_size,
+                      epochs=args.n_epochs,
+                      validation_data=(x_eval_encoded, eval_dataset.y),
+                      callbacks=[metrics],
+                      #verbose=0
+                      )
+
+    logger.info(' — '.join([f'{m_name}: {train_history.history[m_name][-1]:.2}' for m_name in sorted(train_history.history.keys())]))
+    eval_metrics = model.evaluate(x_eval_encoded, eval_dataset.y, batch_size=args.batch_size)
+    logger.info(' — '.join([f'eval_{m_name}: {eval_metrics[i]:.2}' for i, m_name in enumerate(metric_names)]))
     #print('Test score:', score)
     #print('Test acc:', acc)
     #print('Test f1:', f1)

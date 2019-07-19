@@ -89,6 +89,7 @@ class ConllDataset(data.Dataset):
         #tags_str = []
         tag_padding = [{name: "<PAD>" for name in tag_types.keys()}]
         t = defaultdict(list)
+        seqlens = []
         for entry in entries:
             # comment lines start with "#"
             words = [line.split()[word_idx] for line in entry.splitlines() if not line.startswith('#')]
@@ -102,6 +103,7 @@ class ConllDataset(data.Dataset):
             #tags_str.append(c_tags)
             for _name, _tags in c_t.items():
                 t[_name].append(_tags)
+            seqlens.append(len(c_x))
             maxlen = max(len(c_x), maxlen)
         logger.info('loaded %i entries. maxlen: %i' % (len(x), maxlen))
 
@@ -111,6 +113,7 @@ class ConllDataset(data.Dataset):
                 't': t,
                 #'tags_str': tags_str,
                 #'tagset': tagset,
+                'seqlens': seqlens,
                 'maxlen': maxlen}
 
 
@@ -193,7 +196,7 @@ class ConllDataset(data.Dataset):
             yy = [tag2idx[t] for t in tags]
             y.append(yy)
         if pad_to_numpy:
-            y = keras_preprocessing.sequence.pad_sequences(y, maxlen=self.seqlen, padding=PADDING)
+            y = keras_preprocessing.sequence.pad_sequences(y, maxlen=self.maxlen, padding=PADDING)
             if to_categorical:
                 y = keras.utils.to_categorical(y, num_classes=len(tagset))
         elif to_categorical:
@@ -209,7 +212,7 @@ class ConllDataset(data.Dataset):
             ConllDataset.bert_model = BertModel.from_pretrained('bert-base-cased').eval()
         #assert isinstance(sequences, np.ndarray), 'sequences has to be an ndarray. Did you call pad_to_numpy(maxlen)?'
         if not isinstance(sequences, np.ndarray):
-            sequences = keras_preprocessing.sequence.pad_sequences(sequences, maxlen=self.seqlen, padding=PADDING)
+            sequences = keras_preprocessing.sequence.pad_sequences(sequences, maxlen=self.maxlen, padding=PADDING)
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         ConllDataset.bert_model.to(device)
         encs_list = []
