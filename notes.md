@@ -8,3 +8,6 @@ train conll2003 DEPRECATED
 
 train conll2003 via keras @gpu8
 `CUDA_VISIBLE_DEVICES=0,1,2,3 python train_keras.py --batch_size 1024 --top_rnns --lr 1e-4 --n_epochs 30 --use_default_tagset --trainset /home/binder/corpora/conll2003/train.txt --validset /home/binder/corpora/conll2003/valid.txt &> train0.log`
+
+
+`CUDA_VISIBLE_DEVICES=3,4,5,6 python train_keras.py --batch_size 1024 --top_rnns --lr 1e-4 --n_epochs 30 --use_default_tagset --trainset /home/binder/corpora/conll2003/train.txt --validset /home/binder/corpora/conll2003/valid.txt &> train3.log`

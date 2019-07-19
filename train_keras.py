@@ -15,14 +15,14 @@ logger = get_logger(__name__)
 
 class ANDCounter(keras.layers.Layer):
     """
-    conda_and is a function that maps a tuple (y_true, y_pred) to a list of conditions
+    conditions_and is a function that maps a tuple (y_true, y_pred) to a list of conditions that are then reduced
+    via logical AND along the last axis. True elements are counted and finally returned.
     """
-    def __init__(self, cond_and, n_classes, name="and_counter", **kwargs):
+    def __init__(self, conditions_and, name="and_counter", **kwargs):
         super(ANDCounter, self).__init__(name=name, **kwargs)
         self.stateful = True
         self.count = keras.backend.variable(value=0, dtype="int32")
-        self.cond = cond_and
-        self.n_classes = n_classes
+        self.cond = conditions_and
 
     def reset_states(self):
         keras.backend.set_value(self.count, 0)
@@ -30,11 +30,7 @@ class ANDCounter(keras.layers.Layer):
     def __call__(self, y_true, y_pred):
         # initial shape is (batch_size, squence_length, n_classes)
 
-        # exclude all entries/tokens where true class is 0 (<PAD>)
-        y_true_wo_index_vec = K.sum(y_true[:,:,1:], axis=-1)
-        y_true_wo_index_mask = K.stack([y_true_wo_index_vec] * self.n_classes, axis=-1)
-
-        conds_list = self.cond(y_true, y_pred) + (y_true_wo_index_mask, )
+        conds_list = self.cond(y_true, y_pred) #+ (y_true_wo_index_mask, )
 
         conds_xd = K.cast(K.stack(conds_list, axis=-1), 'bool')
 
@@ -72,24 +68,35 @@ def get_model(n_classes, input_shape, input_dtype, lr, top_rnns=True):
     optimizer = Adam(lr=lr)
     model.compile(loss='categorical_crossentropy',
                   optimizer=optimizer,
-                  metrics=[ANDCounter(cond_and=lambda y_true, y_pred: (y_true,
-                                                                       K.round(y_pred),
-                                                                       #K.ones_like(y_pred)
-                                                                       ),
-                                      n_classes=n_classes,
+                  metrics=[ANDCounter(conditions_and=lambda y_true, y_pred: (y_true,
+                                                                             K.round(y_pred),
+                                                                             # This condition masks all entries where y_true has class=0, i.e. <PAD>:
+                                                                             #   1) gold values, except for the first class, are summed along the class-axis
+                                                                             #   2) the resulting vector is broadcast back to the original format (via stack and number of classes)
+                                                                             K.stack([K.sum(y_true[:, :, 1:],
+                                                                                      axis=-1)] * n_classes, axis=-1),
+                                                                             ),
                                       name='tp'),
-                           ANDCounter(cond_and=lambda y_true, y_pred: (K.abs(y_true - K.ones_like(y_true)),
-                                                                       K.round(y_pred),
-                                                                       #K.ones_like(y_pred)
-                                                                       ),
-                                      n_classes=n_classes,
+                           ANDCounter(conditions_and=lambda y_true, y_pred: (K.abs(y_true - K.ones_like(y_true)),
+                                                                             K.round(y_pred),
+                                                                             # this condition masks all entries where y_true has class=0, i.e. <PAD> (see above)
+                                                                             K.stack([K.sum(y_true[:, :, 1:],
+                                                                                      axis=-1)] * n_classes, axis=-1),
+                                                                             ),
                                       name='fp'),
-                           ANDCounter(cond_and=lambda y_true, y_pred: (y_true,
-                                                                       K.abs(K.round(y_pred) - K.ones_like(y_pred)),
-                                                                       #K.ones_like(y_pred)
-                                                                       ),
-                                      n_classes=n_classes,
+                           ANDCounter(conditions_and=lambda y_true, y_pred: (y_true,
+                                                                             K.abs(K.round(y_pred) - K.ones_like(y_pred)),
+                                                                             # this condition masks all entries where y_true has class=0, i.e. <PAD> (see above)
+                                                                             K.stack([K.sum(y_true[:, :, 1:],
+                                                                                      axis=-1)] * n_classes, axis=-1),
+                                                                             ),
                                       name='fn'),
+                           ANDCounter(conditions_and=lambda y_true, y_pred: (y_true,
+                                                                             # this condition masks all entries where y_true has class=0, i.e. <PAD> (see above)
+                                                                             K.stack([K.sum(y_true[:, :, 1:],
+                                                                                      axis=-1)] * n_classes, axis=-1),
+                                                                             ),
+                                      name='total_count'),
                            'acc', ]
                   )
     plot_model(model, to_file='model.png', show_shapes=True)
