@@ -14,26 +14,31 @@ from data_load import ConllDataset, get_logger
 logger = get_logger(__name__)
 
 class ANDCounter(keras.layers.Layer):
-
-    def __init__(self, cond_and, name="and_counter", **kwargs):
+    """
+    conda_and is a function that maps a tuple (y_true, y_pred) to a list of conditions
+    """
+    def __init__(self, cond_and, n_classes, name="and_counter", **kwargs):
         super(ANDCounter, self).__init__(name=name, **kwargs)
         self.stateful = True
         self.count = keras.backend.variable(value=0, dtype="int32")
         self.cond = cond_and
+        self.n_classes = n_classes
 
     def reset_states(self):
         keras.backend.set_value(self.count, 0)
 
     def __call__(self, y_true, y_pred):
-        # TODO: discard zero-index predictions
-        y_true = K.flatten(y_true)
-        y_pred = K.flatten(y_pred)
+        # initial shape is (batch_size, squence_length, n_classes)
 
-        conds_list = self.cond(y_true, y_pred)
+        # exclude all entries/tokens where true class is 0 (<PAD>)
+        y_true_wo_index_vec = K.sum(y_true[:,:,1:], axis=-1)
+        y_true_wo_index_mask = K.stack([y_true_wo_index_vec] * self.n_classes, axis=-1)
 
-        conds_3d = K.cast(K.stack(conds_list, axis=-1), 'bool')
+        conds_list = self.cond(y_true, y_pred) + (y_true_wo_index_mask, )
 
-        res = K.sum(K.cast(K.all(conds_3d, axis=-1), 'int32'))
+        conds_xd = K.cast(K.stack(conds_list, axis=-1), 'bool')
+
+        res = K.sum(K.cast(K.all(conds_xd, axis=-1), 'int32'))
 
         updates = [
             keras.backend.update_add(
@@ -69,15 +74,21 @@ def get_model(n_classes, input_shape, input_dtype, lr, top_rnns=True):
                   optimizer=optimizer,
                   metrics=[ANDCounter(cond_and=lambda y_true, y_pred: (y_true,
                                                                        K.round(y_pred),
-                                                                       K.ones_like(y_pred)),
+                                                                       #K.ones_like(y_pred)
+                                                                       ),
+                                      n_classes=n_classes,
                                       name='tp'),
                            ANDCounter(cond_and=lambda y_true, y_pred: (K.abs(y_true - K.ones_like(y_true)),
                                                                        K.round(y_pred),
-                                                                       K.ones_like(y_pred)),
+                                                                       #K.ones_like(y_pred)
+                                                                       ),
+                                      n_classes=n_classes,
                                       name='fp'),
                            ANDCounter(cond_and=lambda y_true, y_pred: (y_true,
                                                                        K.abs(K.round(y_pred) - K.ones_like(y_pred)),
-                                                                       K.ones_like(y_pred)),
+                                                                       #K.ones_like(y_pred)
+                                                                       ),
+                                      n_classes=n_classes,
                                       name='fn'),
                            'acc', ]
                   )
