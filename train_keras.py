@@ -1,104 +1,46 @@
 import argparse
 import logging
+from collections import defaultdict
 
 import keras
 from keras import Input, Model
 from keras.layers import LSTM, Dense, Bidirectional, K
 from keras.optimizers import Adam
 from keras.utils import plot_model, multi_gpu_model
-import numpy as np
-import sklearn.metrics as sklm
-from keras_preprocessing import sequence
 from tensorflow.python.client import device_lib
 import tensorflow as tf
 
 from data_load import ConllDataset, get_logger
 logger = get_logger(__name__)
 
-def calc_metrics(model, data, is_heads_mask):
-    score = np.asarray(model.predict(data[0]))
-    predict = np.round(score)
-    targ = data[1]
+class ANDCounter(keras.layers.Layer):
 
-    # flatten and mask for heads
-    score = score.reshape((-1, score.shape[-1]))[is_heads_mask]
-    predict = predict.reshape((-1, predict.shape[-1]))[is_heads_mask]
-    targ = targ.reshape((-1, targ.shape[-1]))[is_heads_mask]
+    def __init__(self, cond_and, name="and_counter", **kwargs):
+        super(ANDCounter, self).__init__(name=name, **kwargs)
+        self.stateful = True
+        self.tp = keras.backend.variable(value=0, dtype="int32")
+        self.cond = cond_and
 
-    precision = sklm.precision_score(targ, predict, average='macro')
-    recall = sklm.recall_score(targ, predict, average='macro')
-    if precision != 0.0 and recall != 0.0:
-        f1 = 2 * precision * recall / (precision + recall)
-    else:
-        f1 = 0.0
-    return {'f1': f1, 'precision': precision, 'recall': recall}
+    def reset_states(self):
+        keras.backend.set_value(self.tp, 0)
 
-# taken from https://datascience.stackexchange.com/questions/13746/how-to-define-a-custom-performance-metric-in-keras
-def f1_score(y_true, y_pred):
-    """
-    f1 score
+    def __call__(self, y_true, y_pred):
+        # TODO: discard zero-index predictions
+        y_true = K.flatten(y_true)
+        y_pred = K.flatten(y_pred)
 
-    :param y_true:
-    :param y_pred:
-    :return:
-    """
-    # TODO: discard zero-index predictions
-    y_true = K.expand_dims(K.flatten(y_true))
-    y_pred = K.expand_dims(K.flatten(y_pred))
+        conds_list = self.cond(y_true, y_pred)
 
-    tp_3d = K.concatenate(
-        [
-            K.cast(y_true, 'bool'),
-            K.cast(K.round(y_pred), 'bool'),
-            K.cast(K.ones_like(y_pred), 'bool')
-        ], axis=-1
-    )
+        conds_3d = K.cast(K.stack(conds_list, axis=-1), 'bool')
 
-    fp_3d = K.concatenate(
-        [
-            K.cast(K.abs(y_true - K.ones_like(y_true)), 'bool'),
-            K.cast(K.round(y_pred), 'bool'),
-            K.cast(K.ones_like(y_pred), 'bool')
-        ], axis=-1
-    )
+        res = K.sum(K.cast(K.all(conds_3d, axis=-1), 'int32'))
 
-    fn_3d = K.concatenate(
-        [
-            K.cast(y_true, 'bool'),
-            K.cast(K.abs(K.round(y_pred) - K.ones_like(y_pred)), 'bool'),
-            K.cast(K.ones_like(y_pred), 'bool')
-        ], axis=-1
-    )
-
-    tp = K.sum(K.cast(K.all(tp_3d, axis=-1), 'int32'))
-    fp = K.sum(K.cast(K.all(fp_3d, axis=-1), 'int32'))
-    fn = K.sum(K.cast(K.all(fn_3d, axis=-1), 'int32'))
-
-    precision = tp / (tp + fp)
-    recall = tp / (tp + fn)
-    return 2 * ((precision * recall) / (precision + recall))
-
-
-# taken from https://datascience.stackexchange.com/questions/13746/how-to-define-a-custom-performance-metric-in-keras
-class Metrics(keras.callbacks.Callback):
-    def __init__(self, val_is_heads):
-        super(Metrics, self).__init__()
-        self.val_is_heads_mask = val_is_heads.reshape((-1,)).astype(bool)
-
-    #def on_train_begin(self, logs={}):
-        #self.confusion = []
-        #self.precision = []
-        #self.recall = []
-        #self.f1s = []
-        #self.kappa = []
-        #self.auc = []
-
-    def on_epoch_end(self, epoch, logs={}):
-
-        metrics_eval = calc_metrics(self.model, data=self.validation_data, is_heads_mask=self.val_is_heads_mask)
-        print(' — '.join([f'val_{m}: {v:.2}' for m, v in metrics_eval.items()]))
-
-        return
+        updates = [
+            keras.backend.update_add(
+                self.tp,
+                res)]
+        self.add_update(updates)
+        return self.tp
 
 def get_bi_lstm(n_hidden=768, dropout=0.0, recurrent_dropout=0.0):
     return Bidirectional(LSTM(n_hidden // 2, dropout=dropout, recurrent_dropout=recurrent_dropout, return_sequences=True))
@@ -125,12 +67,40 @@ def get_model(n_classes, input_shape, input_dtype, lr, top_rnns=True):
     optimizer = Adam(lr=lr)
     model.compile(loss='categorical_crossentropy',
                   optimizer=optimizer,
-                  metrics=[f1_score, 'acc']
+                  metrics=[ANDCounter(cond_and=lambda y_true, y_pred: (y_true,
+                                                                       K.round(y_pred),
+                                                                       K.ones_like(y_pred)),
+                                      name='tp'),
+                           ANDCounter(cond_and=lambda y_true, y_pred: (K.abs(y_true - K.ones_like(y_true)),
+                                                                       K.round(y_pred),
+                                                                       K.ones_like(y_pred)),
+                                      name='fp'),
+                           ANDCounter(cond_and=lambda y_true, y_pred: (y_true,
+                                                                       K.abs(K.round(y_pred) - K.ones_like(y_pred)),
+                                                                       K.ones_like(y_pred)),
+                                      name='fn'),
+                           'acc', ]
                   )
     plot_model(model, to_file='model.png', show_shapes=True)
     # use model_save to save weights
-    return model, model_save, ('f1_score', 'acc')
+    return model, model_save
 
+def counts_to_metrics(tp, fp, fn, **unused):
+    precision = tp / (tp + fp)
+    recall = tp / (tp + fn)
+    return {'f1': round(2 * ((precision * recall) / (precision + recall)), 3), 'precision': round(precision, 3), 'recall': round(recall, 3)}
+
+def get_metrics_from_hist(history, idx=-1):
+    res = defaultdict(dict)
+    for m_name in history.keys():
+        if m_name.startswith('val_'):
+            res['val'][m_name[len('val_'):]] = history[m_name][idx]
+        else:
+            res['train'][m_name] = history[m_name][idx]
+    return res
+
+def format_metrics(metrics, prefix):
+    return ' — '.join([f'{prefix}_{m_name}: {metrics[m_name]}' for m_name in sorted(metrics.keys())])
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
@@ -181,25 +151,28 @@ if __name__=="__main__":
 
     # TODO: put original pytorch model on top to recreate original performance
     logger.info('Build model...')
-    model, save_model, metric_names = get_model(n_classes=len(tagset), input_shape=bert_output_shape, input_dtype=bert_output_dtype,
-                                                lr=args.lr, top_rnns=args.top_rnns)
+    model, save_model = get_model(n_classes=len(tagset), input_shape=bert_output_shape, input_dtype=bert_output_dtype,
+                                  lr=args.lr, top_rnns=args.top_rnns)
 
     logger.info('Train with batch_size=%i...' % args.batch_size)
-    metrics = Metrics(val_is_heads=sequence.pad_sequences(eval_dataset.is_heads, maxlen=maxlen))
     train_history = model.fit(x=x_train_encoded, y=train_dataset.y,
                       batch_size=args.batch_size,
                       epochs=args.n_epochs,
                       validation_data=(x_eval_encoded, eval_dataset.y),
-                      callbacks=[metrics],
                       #verbose=0
                       )
 
-    logger.info(' — '.join([f'{m_name}: {train_history.history[m_name][-1]:.2}' for m_name in sorted(train_history.history.keys())]))
-    eval_metrics = model.evaluate(x_eval_encoded, eval_dataset.y, batch_size=args.batch_size)
-    logger.info(' — '.join([f'eval_{m_name}: {eval_metrics[i]:.2}' for i, m_name in enumerate(metric_names)]))
-    #print('Test score:', score)
-    #print('Test acc:', acc)
-    #print('Test f1:', f1)
-    #eval_pred = model.predict(x_eval_encoded)
+    train_metrics = get_metrics_from_hist(train_history.history)
+    for _data, _metrics in train_metrics.items():
+        logger.info(format_metrics(metrics=_metrics, prefix=_data))
+        final_metrics = counts_to_metrics(**_metrics)
+        logger.info(format_metrics(metrics=final_metrics, prefix=_data))
+
+    logger.info('Test...')
+    eval_metrics_list = model.evaluate(x_eval_encoded, eval_dataset.y, batch_size=args.batch_size)
+    eval_metrics = {model.metrics_names[i]: m for i, m in enumerate(eval_metrics_list)}
+    logger.info(format_metrics(metrics=eval_metrics, prefix='val_final'))
+    eval_metrics_final = counts_to_metrics(**eval_metrics)
+    logger.info(format_metrics(metrics=eval_metrics_final, prefix='val_final'))
 
     #logger.info('done')
