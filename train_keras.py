@@ -46,6 +46,19 @@ class ANDCounter(keras.layers.Layer):
         self.add_update(updates)
         return self.count
 
+class Metrics(keras.callbacks.Callback):
+    def on_epoch_end(self, epoch, logs={}):
+        res = defaultdict(dict)
+        for m_name in logs.keys():
+            if m_name.startswith('val_'):
+                res['val'][m_name[len('val_'):]] = logs[m_name]
+            else:
+                res['train'][m_name] = logs[m_name]
+        for k in res.keys():
+            current_metrics = counts_to_metrics(**res[k])
+            logger.info(format_metrics(current_metrics, prefix=k))
+        return
+
 def get_bi_lstm(n_hidden=768, dropout=0.0, recurrent_dropout=0.0):
     return Bidirectional(LSTM(n_hidden // 2, dropout=dropout, recurrent_dropout=recurrent_dropout, return_sequences=True))
 
@@ -180,6 +193,7 @@ if __name__=="__main__":
                       batch_size=args.batch_size,
                       epochs=args.n_epochs,
                       validation_data=(x_eval_encoded, eval_dataset.y),
+                      callbacks=[Metrics()]
                       #verbose=0
                       )
 
