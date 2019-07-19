@@ -15,6 +15,9 @@ logger = get_logger(__name__)
 
 class ANDCounter(keras.layers.Layer):
     """
+    inspired by https://github.com/keras-team/keras/issues/10884#issuecomment-412120393
+    and https://datascience.stackexchange.com/questions/13746/how-to-define-a-custom-performance-metric-in-keras
+
     conditions_and is a function that maps a tuple (y_true, y_pred) to a list of conditions that are then reduced
     via logical AND along the last axis. True elements are counted and finally returned.
     """
@@ -46,7 +49,7 @@ class ANDCounter(keras.layers.Layer):
 def get_bi_lstm(n_hidden=768, dropout=0.0, recurrent_dropout=0.0):
     return Bidirectional(LSTM(n_hidden // 2, dropout=dropout, recurrent_dropout=recurrent_dropout, return_sequences=True))
 
-def get_model(n_classes, input_shape, input_dtype, lr, top_rnns=True):
+def get_model(n_classes, input_shape, input_dtype, lr, top_rnns=True, metrics_eval_discard_first_classes=2):
     input = Input(shape=(None, input_shape[-1]), dtype=input_dtype, name='bert_encodings')
     X = input
     if top_rnns:
@@ -73,27 +76,27 @@ def get_model(n_classes, input_shape, input_dtype, lr, top_rnns=True):
                                                                              # This condition masks all entries where y_true has class=0, i.e. <PAD>:
                                                                              #   1) gold values, except for the first class, are summed along the class-axis
                                                                              #   2) the resulting vector is broadcast back to the original format (via stack and number of classes)
-                                                                             K.stack([K.sum(y_true[:, :, 1:],
+                                                                             K.stack([K.sum(y_true[:, :, metrics_eval_discard_first_classes:],
                                                                                       axis=-1)] * n_classes, axis=-1),
                                                                              ),
                                       name='tp'),
                            ANDCounter(conditions_and=lambda y_true, y_pred: (K.abs(y_true - K.ones_like(y_true)),
                                                                              K.round(y_pred),
                                                                              # this condition masks all entries where y_true has class=0, i.e. <PAD> (see above)
-                                                                             K.stack([K.sum(y_true[:, :, 1:],
+                                                                             K.stack([K.sum(y_true[:, :, metrics_eval_discard_first_classes:],
                                                                                       axis=-1)] * n_classes, axis=-1),
                                                                              ),
                                       name='fp'),
                            ANDCounter(conditions_and=lambda y_true, y_pred: (y_true,
                                                                              K.abs(K.round(y_pred) - K.ones_like(y_pred)),
                                                                              # this condition masks all entries where y_true has class=0, i.e. <PAD> (see above)
-                                                                             K.stack([K.sum(y_true[:, :, 1:],
+                                                                             K.stack([K.sum(y_true[:, :, metrics_eval_discard_first_classes:],
                                                                                       axis=-1)] * n_classes, axis=-1),
                                                                              ),
                                       name='fn'),
                            ANDCounter(conditions_and=lambda y_true, y_pred: (y_true,
                                                                              # this condition masks all entries where y_true has class=0, i.e. <PAD> (see above)
-                                                                             K.stack([K.sum(y_true[:, :, 1:],
+                                                                             K.stack([K.sum(y_true[:, :, metrics_eval_discard_first_classes:],
                                                                                       axis=-1)] * n_classes, axis=-1),
                                                                              ),
                                       name='total_count'),
