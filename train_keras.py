@@ -18,11 +18,11 @@ class ANDCounter(keras.layers.Layer):
     def __init__(self, cond_and, name="and_counter", **kwargs):
         super(ANDCounter, self).__init__(name=name, **kwargs)
         self.stateful = True
-        self.tp = keras.backend.variable(value=0, dtype="int32")
+        self.count = keras.backend.variable(value=0, dtype="int32")
         self.cond = cond_and
 
     def reset_states(self):
-        keras.backend.set_value(self.tp, 0)
+        keras.backend.set_value(self.count, 0)
 
     def __call__(self, y_true, y_pred):
         # TODO: discard zero-index predictions
@@ -37,10 +37,10 @@ class ANDCounter(keras.layers.Layer):
 
         updates = [
             keras.backend.update_add(
-                self.tp,
+                self.count,
                 res)]
         self.add_update(updates)
-        return self.tp
+        return self.count
 
 def get_bi_lstm(n_hidden=768, dropout=0.0, recurrent_dropout=0.0):
     return Bidirectional(LSTM(n_hidden // 2, dropout=dropout, recurrent_dropout=recurrent_dropout, return_sequences=True))
