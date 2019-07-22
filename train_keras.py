@@ -50,7 +50,7 @@ if __name__=="__main__":
 
     # TODO: put original pytorch model on top to recreate original performance
     logger.info('Build model...')
-    model_keras = KerasModel(n_classes=len(tagset), n_dims=bert_output_shape[-1], lr=args.lr,
+    model_keras = KerasModel(n_classes=len(tagset), input_dims=bert_output_shape[-1], lr=args.lr,
                              top_rnns=args.top_rnns)
 
     logger.info('Train with batch_size=%i...' % args.batch_size)

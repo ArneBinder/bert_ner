@@ -1,5 +1,5 @@
-
 import logging
+import torch
 from collections import defaultdict
 
 import keras
@@ -9,6 +9,7 @@ from keras.optimizers import Adam
 from keras.utils import plot_model, multi_gpu_model
 from tensorflow.python.client import device_lib
 import tensorflow as tf
+from torch import nn, optim
 
 from data_load import get_logger, ConllDataset
 
@@ -79,9 +80,9 @@ def get_bi_lstm(n_hidden=768, dropout=0.0, recurrent_dropout=0.0):
     return Bidirectional(LSTM(n_hidden // 2, dropout=dropout, recurrent_dropout=recurrent_dropout, return_sequences=True))
 
 class KerasModel(ConllModel):
-    def __init__(self, n_classes, n_dims, lr, top_rnns=True, metrics_eval_discard_first_classes=2):
+    def __init__(self, n_classes, input_dims, lr, top_rnns=True, metrics_eval_discard_first_classes=2):
         self.train_history = None
-        input = Input(shape=(None, n_dims), dtype='float32', name='bert_encodings')
+        input = Input(shape=(None, input_dims), dtype='float32', name='bert_encodings')
         X = input
         if top_rnns:
             X = get_bi_lstm()(X)
@@ -159,6 +160,48 @@ def get_metrics_from_hist(history, idx=-1):
         else:
             res['train'][m_name] = history[m_name][idx]
     return res
+
+### Pytorch
+
+class PytorchNet(nn.Module):
+    def __init__(self, n_classes, input_dims, top_rnns=False, device='cpu'):
+        super().__init__()
+
+        self.top_rnns=top_rnns
+        if top_rnns:
+            self.rnn = nn.LSTM(bidirectional=True, num_layers=2, input_size=input_dims, hidden_size=input_dims // 2, batch_first=True)
+        self.fc = nn.Linear(input_dims, n_classes)
+
+        self.device = device
+
+
+    def forward(self, x, y, ):
+        '''
+        x: (N, T). int64
+        y: (N, T). int64
+
+        Returns
+        enc: (N, T, VOCAB)
+        '''
+        x = x.to(self.device)
+        y = y.to(self.device)
+
+        if self.top_rnns:
+            x, _ = self.rnn(x)
+        logits = self.fc(x)
+        y_hat = logits.argmax(-1)
+        return logits, y, y_hat
+
+class PytorchModel(ConllModel):
+    def __init__(self, n_classes, input_dims, lr, top_rnns=True):
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        model = PytorchNet(n_classes=n_classes, input_dims=input_dims, device=device, top_rnns=top_rnns).to(device)
+        model = nn.DataParallel(model)
+
+        optimizer = optim.Adam(model.parameters(), lr=lr)
+        criterion = nn.CrossEntropyLoss(ignore_index=0)
+
+        # TODO
 
 
 ### general purpose
