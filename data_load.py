@@ -65,7 +65,7 @@ class ConllDataset(data.Dataset):
         """
         fpath: [train|valid|test].txt
         """
-
+        self.cache = {}
         self.cache_dir = cache_dir
         os.makedirs(self.cache_dir, exist_ok=True)
         logger.info('process data from: %s...' % fpath)
@@ -117,8 +117,11 @@ class ConllDataset(data.Dataset):
                 'maxlen': maxlen}
 
 
-    def calc_cached(self, func, fn, *args, **kwargs):
+    def calc_cached(self, func, fn, keep=False, *args, **kwargs):
         full_fn = self.cache_base_fn + fn
+        if full_fn in self.cache:
+            return self.cache[full_fn]
+
         if fn.endswith('.json'):
             if os.path.exists(full_fn):
                 logger.info(f'load from cache {full_fn}...')
@@ -145,6 +148,9 @@ class ConllDataset(data.Dataset):
                 np.save(full_fn, res)
         else:
             raise NotImplementedError(f'Unknown cache file extension: {fn}. Use either json, pkl or npy.')
+
+        if keep or full_fn in self.cache:
+            self.cache[full_fn] = res
         return res
 
 
@@ -181,7 +187,7 @@ class ConllDataset(data.Dataset):
         return len(self.x)
 
 
-    def generate_y_and_tagset(self, tag_type='ner', tagset=None, pad_to_numpy=True, to_categorical=False):
+    def generate_y(self, tag_type='ner', tagset=None, pad_to_numpy=True, to_categorical=False):
         # create vocab from all tags (move padding tag to idx=0)
         if tagset is None:
             tagset = ['<PAD>'] + list(set(chain(*self.t[tag_type])) - {'<PAD>'})
@@ -224,8 +230,8 @@ class ConllDataset(data.Dataset):
                 encs_list.append(encs.detach().cpu().numpy())
         return np.concatenate(encs_list, axis=0)
 
-    def x_bertencoded(self):
-        return self.calc_cached(func=self.encode_with_bert, fn='xencoded.npy', sequences=self.x)
+    def x_bertencoded(self, keep=False):
+        return self.calc_cached(func=self.encode_with_bert, keep=keep, fn='xencoded.npy', sequences=self.x)
 
     def vocab_size(self):
         return len(ConllDataset.tokenizer.vocab)
