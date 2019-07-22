@@ -147,7 +147,7 @@ if __name__=="__main__":
     #parser.add_argument("--logdir", type=str, default="checkpoints/01")
     parser.add_argument("--trainset", type=str, default="conll2003/train.txt")
     parser.add_argument("--validset", type=str, default="conll2003/valid.txt")
-    parser.add_argument("--testset", type=str, default="conll2003/test.txt")
+    parser.add_argument("--testset", type=str, default="")
     parser.add_argument("--use_default_tagset", dest="use_default_tagset", action="store_true")
     parser.add_argument("--predict_tag", dest="predict_tag", type=str, default='ner')
     args = parser.parse_args()
